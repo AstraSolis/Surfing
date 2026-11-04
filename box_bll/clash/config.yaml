@@ -266,6 +266,9 @@ proxy-groups:
   - name: GitHub
     icon: "https://cdn.jsdelivr.net/gh/GitMetaio/Surfing@main/app/icon/GitHub.svg"
     <<: *proxy_groups
+  - name: Linux.do
+    icon: "https://cdn.jsdelivr.net/gh/AstraSolis/Surfing@main/app/icon/LinuxDO.svg"
+    <<: *proxy_groups
   - name: Twitter(X)
     icon: "https://cdn.jsdelivr.net/gh/GitMetaio/Surfing@main/app/icon/Twitter.svg"
     <<: *proxy_groups
@@ -279,9 +282,9 @@ proxy-groups:
     icon: "https://cdn.jsdelivr.net/gh/GitMetaio/Surfing@main/app/icon/No-ads-all.svg"
     type: select
     proxies:
-      - PASS
+      - ⛔️ 禁止·拒绝连接 # 默认拦截；已记忆 PASS 的设备需在面板切换
+      - PASS # 关闭拦截，继续匹配后续规则
       - REJECT-DROP 
-      - ⛔️ 禁止·拒绝连接
       - 🌐 DNS_Hijack
   - name: WebRTC
     icon: "https://cdn.jsdelivr.net/gh/GitMetaio/Surfing@main/app/icon/WebRTC.svg"
@@ -366,7 +369,7 @@ rule-providers:
     <<: *Domain
     path: ./rules/CN_域.mrs
     url: "https://cdn.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@meta/geo/geosite/cn.mrs"
-  No-ads-all_域:
+  No-ads-all_域: # 秋风广告拦截规则（完整版）：https://awavenue.top/Sub.html
     <<: *Domain
     path: ./rules/No-ads-all.mrs
     url: "https://cdn.jsdelivr.net/gh/TG-Twilight/AWAvenue-Ads-Rule@main/Filters/AWAvenue-Ads-Rule-Clash.mrs"
@@ -462,6 +465,10 @@ rule-providers:
     <<: *Domain
     path: ./rules/GitHub.mrs
     url: "https://cdn.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@meta/geo/geosite/github.mrs"
+  LinuxDO_域: # Linux.do 及静态资源域名
+    <<: *Domain
+    path: ./rules/LinuxDO.mrs
+    url: "https://cdn.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@meta/geo/geosite/linuxdo.mrs"
   Twitter_域:
     <<: *Domain
     path: ./rules/Twitter.mrs
@@ -485,10 +492,11 @@ rules:
   - RULE-SET,自定义规则,特殊地址
   - RULE-SET,WebRTC_端/域,WebRTC
   - RULE-SET,GoogleFCM_域,GoogleFCM
+  # 广告优先于业务分流，上方保留自定义放行和 GoogleFCM 策略
+  - RULE-SET,No-ads-all_域,广告拦截
   - RULE-SET,YouTube_域,YouTube
   - RULE-SET,Google_域,Google
   - RULE-SET,Google_IP,Google,no-resolve
-  - RULE-SET,No-ads-all_域,广告拦截
   - PROCESS-NAME,com.ss.android.ugc.aweme,抖音
   - RULE-SET,DouYin_域,抖音
   - PROCESS-NAME,com.xingin.xhs,小红书
@@ -498,6 +506,7 @@ rules:
   - RULE-SET,BiliBili_IP,BiliBili,no-resolve
   - RULE-SET,Steam_域,Steam
   - RULE-SET,GitHub_域,GitHub
+  - RULE-SET,LinuxDO_域,Linux.do
   - RULE-SET,Discord_域,Discord
   - RULE-SET,TikTok_域,TikTok
   - RULE-SET,Twitter_域,Twitter(X)
