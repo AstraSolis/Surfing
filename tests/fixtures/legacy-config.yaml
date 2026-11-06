@@ -1,0 +1,43 @@
+# Representative pre-landing configuration. Keep independent of Git HEAD.
+p: &p
+  type: http
+  interval: 86400
+proxy_fp: &proxy_fp
+  udp: true
+# 订阅地址相关（安装器备份开始）
+A: &A
+  filter: "^(?!.*(套餐|到期)).*$"
+  use: [1.主要地址, 2.备用地址, 3.额外地址]
+All: &All
+  type: url-test
+  use: [1.主要地址, 2.备用地址, 3.额外地址]
+proxy-providers:
+  1.主要地址:
+    <<: *p
+    override:
+      additional-prefix: 'Main：'
+      <<: *proxy_fp
+    path: ./proxies/1.主要地址.yaml
+    url: 此处引入您的Clash订阅链接地址
+  2.备用地址:
+    <<: *p
+    override:
+      additional-prefix: 'Minor：'
+      <<: *proxy_fp
+    path: ./proxies/2.备用地址.yaml
+    url: 此处引入您的Clash订阅链接地址
+  3.额外地址:
+    <<: *p
+    override:
+      additional-prefix: 'Additi：'
+      <<: *proxy_fp
+    path: ./proxies/3.额外地址.yaml
+    url: 此处引入您的Clash订阅链接地址
+profile: # 安装器备份结束 ↑
+  store-selected: true
+proxy-groups:
+  - name: Personal
+    type: select
+    proxies: [DIRECT]
+rules:
+  - MATCH,Personal

@@ -123,6 +123,8 @@ please update the `com.google.android.webview` component through the Google Play
 
 > Automatically updates every 24 hours
 
+The fork also supports a fixed authenticated SOCKS5 exit. Select an airport node in **落地前置**, then select **家宽落地** in a service group such as OpenAI. Credentials live only in `/data/adb/box_bll/clash/private/landing.yaml`; the installer preserves this file. This mode rejects UDP and does not fall back to a normal proxy on TCP connection failure. A core supporting `rematch` is required (tested with mihomo v1.19.33). See the [setup and upgrade instructions](README_CN.md#家宽落地固定-socks5-出口).
+
 </details>
 
 #

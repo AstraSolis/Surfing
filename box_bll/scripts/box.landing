@@ -1,0 +1,112 @@
+#!/system/bin/sh
+# 独立的家宽配置初始化/迁移工具；不启动服务，不修改防火墙。
+
+landing_init() (
+    root=$1
+    config=$2
+    private_dir="${root}/clash/private"
+    account="${private_dir}/landing.yaml"
+    example="${root}/clash/landing.example.yaml"
+    umask 077
+
+    [ -f "$example" ] || {
+        echo '[box.landing] missing landing.example.yaml' >&2
+        exit 1
+    }
+    [ ! -L "$private_dir" ] && [ ! -L "$account" ] || {
+        echo '[box.landing] refusing symlink for private account' >&2
+        exit 1
+    }
+    mkdir -p "$private_dir" || exit 1
+    chmod 700 "$private_dir" || exit 1
+    if [ ! -e "$account" ]; then
+        cp "$example" "$account" || exit 1
+    fi
+    [ -f "$account" ] && chmod 600 "$account" || exit 1
+
+    # 首次从旧版本升级时，订阅块恢复会带回没有此 merge key 的 proxy-providers。
+    # 只修补带本功能锚点的新配置；用户选择保留完整旧配置时不改写它。
+    [ -f "$config" ] && [ ! -L "$config" ] || {
+        echo '[box.landing] config must be a regular file, not a symlink' >&2
+        exit 1
+    }
+    if grep -q '^landing-providers: &landing_providers' "$config"; then
+        temp=$(mktemp "${config}.landing.XXXXXX") || exit 1
+        trap 'rm -f "$temp"' EXIT
+        awk '
+            function add_merge() {
+                if (!inserted) {
+                    print (indent == "" ? "  " : indent) "<<: *landing_providers"
+                    inserted = 1
+                }
+            }
+            /^proxy-providers:[[:space:]]*($|#)/ {
+                providers = 1; found++; inserted = 0; indent = ""; print; next
+            }
+            providers && /^[^[:space:]#]/ { add_merge(); providers = 0 }
+            providers && /^[[:space:]]*($|#)/ { print; next }
+            providers {
+                if (!inserted) {
+                    match($0, /^[[:space:]]+/)
+                    indent = substr($0, 1, RLENGTH)
+                    add_merge()
+                }
+                entry = substr($0, length(indent) + 1)
+                if (entry ~ /^<<[[:space:]]*:/) {
+                    if (entry ~ /^<<[[:space:]]*:[[:space:]]*\*landing_providers[[:space:]]*($|#)/) next
+                    conflict = 1
+                }
+            }
+            { print }
+            END { if (providers) add_merge(); if (found != 1 || conflict) exit 1 }
+        ' "$config" > "$temp" || {
+            echo '[box.landing] ambiguous proxy-providers section; config left unchanged' >&2
+            exit 1
+        }
+        # 同目录原子替换，失败时保留原配置；无改动则保留原文件。
+        cmp -s "$temp" "$config" || mv -f "$temp" "$config" || exit 1
+    else
+        echo '[box.landing] existing config kept; choose new default config to enable landing'
+    fi
+)
+
+landing_check_core() (
+    core=$1
+    # 在替换设备文件前验证能力，防止不支持 rematch 的旧核心损坏升级体验。
+    [ -x "$core" ] || {
+        echo '[box.landing] mihomo core not found' >&2
+        exit 1
+    }
+    umask 077
+    work=$(mktemp -d "${TMPDIR:-/data/local/tmp}/surfing-landing.XXXXXX") || exit 1
+    trap 'rm -rf "$work"' EXIT
+    cat > "$work/config.yaml" << 'EOF'
+mode: rule
+proxies:
+  - {name: landing-check, type: rematch, target-sub-rule: landing-check}
+sub-rules:
+  landing-check:
+    - MATCH,REJECT
+rules:
+  - MATCH,landing-check
+EOF
+    "$core" -t -d "$work" > "$work/check.log" 2>&1 || {
+        echo '[box.landing] core lacks required config support; use mihomo v1.19.33 or a compatible newer version' >&2
+        exit 1
+    }
+)
+
+case "$1" in
+    init)
+        [ "$#" -eq 3 ] || exit 1
+        landing_init "$2" "$3"
+        ;;
+    check-core)
+        [ "$#" -eq 2 ] || exit 1
+        landing_check_core "$2"
+        ;;
+    *)
+        echo "usage: $0 {init <box_root> <config_path>|check-core <mihomo_path>}" >&2
+        exit 1
+        ;;
+esac

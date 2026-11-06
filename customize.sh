@@ -196,7 +196,31 @@ remove_old_surfingtile() {
   [ -f "$OLD_UNINSTALL" ] && sh "$OLD_UNINSTALL"
 }
 
+# 私有账号不参与普通文件的递归权限重设，避免升级中途放宽权限。
+set_box_permissions() {
+  set_perm "$BOX_BLL_PATH" 0 3005 0755
+  for entry in "$BOX_BLL_PATH"/* "$BOX_BLL_PATH"/.[!.]* "$BOX_BLL_PATH"/..?*; do
+    [ -e "$entry" ] || continue
+    [ "$entry" = "$BOX_BLL_PATH/clash" ] && continue
+    set_perm_recursive "$entry" 0 3005 0755 0644
+  done
+  set_perm "$BOX_BLL_PATH/clash" 0 3005 0755
+  for entry in "$BOX_BLL_PATH/clash"/* "$BOX_BLL_PATH/clash"/.[!.]* "$BOX_BLL_PATH/clash"/..?*; do
+    [ -e "$entry" ] || continue
+    [ "$entry" = "$BOX_BLL_PATH/clash/private" ] && continue
+    set_perm_recursive "$entry" 0 3005 0755 0644
+  done
+}
+
 choose_language
+
+# 升级沿用设备核心，首次安装使用包内核心；先检查再替换任何服务文件。
+LANDING_CORE="$BIN_PATH/clash"
+[ -d "$BOX_BLL_PATH" ] || LANDING_CORE="$MODPATH/box_bll/bin/clash"
+chmod 755 "$MODPATH/box_bll/bin/busybox"
+[ -f "$LANDING_CORE" ] && chmod 755 "$LANDING_CORE"
+ASH_STANDALONE=1 "$MODPATH/box_bll/bin/busybox" sh "$MODPATH/box_bll/scripts/box.landing" check-core "$LANDING_CORE" || \
+  abort "Error: 家宽落地需要支持 rematch 的 mihomo，请先更新核心（验证版本 v1.19.33）. Update mihomo before installing."
 
 sync_version_from_module_prop
     if [ -d "$BOX_BLL_PATH" ]; then
@@ -256,6 +280,7 @@ sync_version_from_module_prop
 
       sleep 1
       cp -f "$MODPATH/box_bll/clash/etc/hosts" "$BOX_BLL_PATH/clash/etc/"
+      cp -f "$MODPATH/box_bll/clash/landing.example.yaml" "$BOX_BLL_PATH/clash/"
       rm -rf "$MODPATH/box_bll"
 
       choose_to_umount_hosts_file
@@ -273,13 +298,18 @@ sync_version_from_module_prop
       choose_to_restore_config
     fi
 
+ASH_STANDALONE=1 "$BIN_PATH/busybox" sh "$SCRIPTS_PATH/box.landing" init "$BOX_BLL_PATH" "$CONFIG_FILE" || \
+  abort "Error: Unable to prepare private landing configuration."
+
 mv -f "$MODPATH/Surfing_service.sh" "$service_dir/"; rm -f "$SURFING_TILE_ZIP"
 
 set_perm_recursive "$MODPATH" 0 0 0755 0644
-set_perm_recursive "$BOX_BLL_PATH" 0 3005 0755 0644
+set_box_permissions
 set_perm_recursive "$BOX_BLL_PATH/scripts" 0 3005 0755 0700
 set_perm_recursive "$BIN_PATH" 0 0 0755 0755
 set_perm_recursive "$BOX_BLL_PATH/clash/etc" 0 0 0755 0644
+set_perm "$BOX_BLL_PATH/clash/private" 0 0 0700
+set_perm "$BOX_BLL_PATH/clash/private/landing.yaml" 0 0 0600
 set_perm "$service_dir/Surfing_service.sh" 0 0 0700
 
 chmod ugo+x "$BOX_BLL_PATH/scripts/"*

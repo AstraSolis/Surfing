@@ -1,5 +1,7 @@
 #!/bin/sh
 
+set -e
+
 isAlpha="${isAlpha:-false}"
 
 CORE_DST="box_bll/bin/clash"
@@ -17,13 +19,17 @@ ZASH_DST="box_bll/clash/webroot/Zash"
 ZASH_TMP="zash_dist.zip"
 
 get_latest_tag() {
+    if [ -n "${GITHUB_TOKEN:-}" ]; then
+        set -- -H "Authorization: Bearer $GITHUB_TOKEN" "$1"
+    fi
     curl -fsSL --retry 5 --retry-delay 5 \
-        -H "Authorization: token $GITHUB_TOKEN" "$1" \
+        "$@" \
         | grep '"tag_name":' | head -n 1 \
         | sed -E 's/.*"tag_name": *"([^"]+)".*/\1/'
 }
 
-latest_version=$(get_latest_tag "$MIHOMO_API")
+# 可显式固定版本以复现构建；未指定时保持获取最新版本的行为。
+latest_version=${MIHOMO_VERSION:-$(get_latest_tag "$MIHOMO_API")}
 
 if [ -z "$latest_version" ]; then
     echo "Error: Failed to fetch Mihomo version."
@@ -53,7 +59,7 @@ else
     exit 1
 fi
 
-zash_latest_version=$(get_latest_tag "$ZASH_API")
+zash_latest_version=${ZASH_VERSION:-$(get_latest_tag "$ZASH_API")}
 if [ -n "$zash_latest_version" ]; then
     echo "Latest Zashboard version: $zash_latest_version"
     zash_url="https://github.com/Zephyruso/zashboard/releases/download/${zash_latest_version}/dist.zip"
@@ -67,13 +73,16 @@ if [ -n "$zash_latest_version" ]; then
             echo "Zashboard deployed to $ZASH_DST"
         else
             echo "Error: Unexpected ZIP structure in Zashboard."
+            exit 1
         fi
         rm -rf zash_temp "$ZASH_TMP"
     else
         echo "Error: Zashboard download failed."
+        exit 1
     fi
 else
     echo "Error: Failed to fetch Zashboard version."
+    exit 1
 fi
 
 APK_DIR="app/version/com.github.surfing"
@@ -105,10 +114,19 @@ fi
 
 sed -i "s/^version=.*/version=${new_version}/" module.prop
 
+# zip 默认更新已有文件，排除项不会删除旧条目；必须重新创建归档。
+rm -f "$filename"
 zip -r -o -X "$filename" ./ \
     -x 'app/*' \
     -x '.git/*' \
     -x '.github/*' \
+    -x '.idea/*' \
+    -x '.ruff_cache/*' \
+    -x '.gitignore' \
+    -x 'AGENTS.md' \
+    -x 'Surfing_*.zip' \
+    -x 'box_bll/clash/private/*' \
+    -x 'tests/*' \
     -x 'folder/*' \
     -x 'build.sh' \
     -x 'Surfing.json' \

@@ -1,2 +1,8 @@
 # JetBrains IDE settings
 .idea/
+
+# Device-only SOCKS5 credentials
+/box_bll/clash/private/
+
+# Local Python test bytecode
+/tests/__pycache__/

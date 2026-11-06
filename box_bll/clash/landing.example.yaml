@@ -1,0 +1,22 @@
+# 安装器仅在 private/landing.yaml 不存在时复制本文件，不覆盖已有账号。
+# 请编辑设备上的 /data/adb/box_bll/clash/private/landing.yaml。
+# 将下方 reject 节点替换为 SOCKS5 示例，只保留一个节点。
+# 不要修改 name；用户名、密码建议用单引号，值内的单引号写成两个单引号。
+proxies:
+  - name: 家宽 SOCKS5
+    type: reject
+
+# proxies:
+#   - name: 家宽 SOCKS5
+#     type: socks5
+#     server: '商家提供的连接地址'
+#     port: 12345
+#     username: '用户名'
+#     password: '密码'
+#     udp: false
+#     # 只有商家明确支持 SOCKS5 over TLS 时才启用，并保持证书校验。
+#     # tls: true
+#     # skip-cert-verify: false
+#
+# 前置由主配置的 provider override 强制指定为“落地前置”，这里无需填写。
+# 当前“家宽落地”为 TCP 模式，即使这里启用 UDP，也不会放行家宽业务的 UDP。

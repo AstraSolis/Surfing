@@ -45,6 +45,20 @@ p: &p
         - "clash.meta"
         - "mihomo"
 # —————————
+# 家宽账号独立保存在设备上；此锚点必须位于订阅备份块之外。
+# 需要支持 rematch 的 mihomo（验证版本 v1.19.33）。
+landing-providers: &landing_providers
+  家宽账号:
+    type: file
+    path: ./private/landing.yaml
+    override:
+      dialer-proxy: 落地前置
+      udp: false
+    # 初始化时文件缺失、为空或解析失败则拒绝连接，禁止退回直连。
+    # 运行中 provider 更新失败会保留旧账号；停用账号需完整重载或重启。
+    payload:
+      - {name: 家宽未配置, type: reject}
+# —————————
 # 订阅地址相关（!!! 请勿删除此注释行，模块更新时将根据此行备份/还原您的订阅配置块 !!!）
 A: &A
   filter: "^(?!.*(套餐|重置|剩余|到期|订阅|群|账户|流量|有效期|时间|官网|失联|余额)).*$"
@@ -59,6 +73,7 @@ All: &All
   - "2.备用地址"
   - "3.额外地址"
 proxy-providers:
+  <<: *landing_providers
   "1.主要地址":
     <<: *p
     override:
@@ -177,10 +192,17 @@ proxies:
   - {name: 🌐 本机·本地直连, type: direct, udp: true}
   - {name: ⛔️ 禁止·拒绝连接, type: reject}
   - {name: 🌐 DNS_Hijack, type: dns}
+  - {name: 家宽·TCP通道, type: rematch, target-sub-rule: 家宽专用}
+# 只有在业务组选择家宽落地后才进入此处；UDP 不再继续匹配普通规则。
+sub-rules:
+  家宽专用:
+    - NETWORK,udp,REJECT
+    - MATCH,家宽·出口
 proxy_groups: &proxy_groups
     type: select
     proxies:
       - 总模式
+      - 家宽落地
       - ALL·延迟最低
       - ALL·负载均衡
       - ALL·故障转移
@@ -209,6 +231,21 @@ proxy-groups:
       - ALL·狮城地区
       - ALL·其它地区
       - 🌐 本机·本地直连
+  - name: 家宽落地
+    type: select
+    proxies:
+      - 家宽·TCP通道
+  - name: 落地前置
+    type: select
+    # 初次使用请手动选择一个机场节点；不引用总模式或家宽，避免循环。
+    proxies:
+      - ⛔️ 禁止·拒绝连接
+    <<: *A
+  - name: 家宽·出口
+    type: select
+    hidden: true
+    use:
+      - 家宽账号
   - name: 订阅更新
     icon: "https://cdn.jsdelivr.net/gh/GitMetaio/Surfing@main/app/icon/Update.svg"
     type: select
@@ -274,6 +311,8 @@ proxy-groups:
     <<: *proxy_groups
   - name: DNS连接
     icon: "https://cdn.jsdelivr.net/gh/GitMetaio/Surfing@main/app/icon/DNS.svg"
+    # DNS 上游直接调用拨号器，不经过业务子规则，不能使用 rematch 入口。
+    exclude-filter: "^家宽落地$"
     <<: *proxy_groups
   - name: 漏网之鱼
     icon: "https://cdn.jsdelivr.net/gh/GitMetaio/Surfing@main/app/icon/HBASE-copy.svg"
