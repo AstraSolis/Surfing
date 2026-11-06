@@ -121,6 +121,7 @@ class SocksHandler(socketserver.BaseRequestHandler):
             # This fixture must never reach the public Internet.
             if host in ("landing.test", "ordinary.test"):
                 host = "127.0.0.1"
+            host = getattr(self.server, "hosts", {}).get(host, host)
             assert ipaddress.ip_address(host).is_loopback, host
             with socket.create_connection((host, port), timeout=3) as other:
                 sock.sendall(b"\x05\x00\x00\x01" + b"\x00" * 6)
@@ -377,10 +378,14 @@ class InstallerTests(unittest.TestCase):
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(REPO / "box_bll" / relative, target)
         (self.stage / "box_bll/clash/proxies").mkdir(exist_ok=True)
+        for source in (REPO / "box_bll/clash/rules").glob("AI-*.list"):
+            target = self.stage / "box_bll/clash/rules" / source.name
+            target.parent.mkdir(exist_ok=True)
+            shutil.copyfile(source, target)
         write(self.stage / "Surfing_service.sh", "# fixture service\n")
         shutil.copyfile(REPO / "module.prop", self.stage / "module.prop")
 
-    def install(self, keep=False, success=True):
+    def install(self, keep=False, success=True, fail_ai_copy=False):
         self.stage_module()
         installer = (REPO / "customize.sh").read_text(encoding="utf-8")
         installer = installer.replace("/data/", self.root.as_posix() + "/data/")
@@ -392,6 +397,22 @@ class InstallerTests(unittest.TestCase):
             if line.startswith("init_busybox_toolchain()")
         )
         installer = installer.replace(original, "init_busybox_toolchain() { :; }")
+        if fail_ai_copy:
+            # Inject a partial write followed by a copy error (such as ENOSPC).
+            # Leave all other real BusyBox filesystem operations unchanged.
+            installer = (
+                """cp() {
+  if [ "$1" = "-f" ] && [ "${2##*/}" = "AI-Gemini.list" ]; then
+    destination="$3"
+    [ ! -d "$destination" ] || destination="$destination/AI-Gemini.list"
+    printf 'partial-copy\\n' > "$destination"
+    return 1
+  fi
+  command cp "$@"
+}
+"""
+                + installer
+            )
         script = self.root / "customize-host.sh"
         write(script, installer)
         write(self.root / "key-index", "0\n")
@@ -474,6 +495,85 @@ class InstallerTests(unittest.TestCase):
         self.assertEqual(text.count("  <<: *landing_providers\n"), 1)
         self.assertIn("家宽账号", yaml.safe_load(text)["proxy-providers"])
 
+    def test_ai_rules_deployed_and_personal_files_preserved(self):
+        defaults = list((REPO / "box_bll/clash/rules").glob("AI-*.list"))
+        self.assertEqual(len(defaults), 10)
+        self.install()
+        rules = self.box / "clash/rules"
+        for source in defaults:
+            self.assertEqual((rules / source.name).read_bytes(), source.read_bytes())
+            (rules / source.name).unlink()  # Simulate a pre-AI installation.
+        personal = {
+            rules / "OpenAI.mrs": b"old-remote-rule-cache",
+            rules / "personal.list": b"DOMAIN,personal.invalid\n",
+            self.box / "clash/etc/AI-user.list": b"DOMAIN,user.invalid\n",
+            self.box / "clash/cache.db": b"existing-selection-cache",
+        }
+        for path, content in personal.items():
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(content)
+        config = self.box / "clash/config.yaml"
+        config.write_bytes(LEGACY.read_bytes())
+        for keep in (True, False, False):
+            with self.subTest(keep=keep):
+                self.install(keep=keep)
+                for source in defaults:
+                    self.assertEqual(
+                        (rules / source.name).read_bytes(), source.read_bytes()
+                    )
+                for path, content in personal.items():
+                    self.assertEqual(path.read_bytes(), content)
+                groups = {
+                    group["name"]
+                    for group in yaml.safe_load(config.read_bytes())["proxy-groups"]
+                }
+                self.assertEqual("Gemini" in groups, not keep)
+                if keep:
+                    self.assertEqual(config.read_bytes(), LEGACY.read_bytes())
+                for source in defaults:
+                    write(rules / source.name, "# stale module defaults\n")
+
+    def test_missing_ai_rule_aborts_before_replacing_device_files(self):
+        self.install()
+        config = self.box / "clash/config.yaml"
+        original = config.read_bytes()
+        stage = self.stage_module
+
+        def missing_rule():
+            stage()
+            (self.stage / "box_bll/clash/rules/AI-Gemini.list").unlink()
+
+        self.stage_module = missing_rule
+        output = self.install(success=False)
+        self.assertIn("Missing AI rule file: AI-Gemini.list", output)
+        self.assertEqual(config.read_bytes(), original)
+        self.assertFalse((self.box / "clash/config.yaml.bak").exists())
+
+    def test_ai_rule_copy_failure_preserves_previous_config(self):
+        self.install()
+        config = self.box / "clash/config.yaml"
+        config.write_bytes(LEGACY.read_bytes())
+        blocked = self.box / "clash/rules/AI-Gemini.list"
+        blocked.unlink()
+        blocked.mkdir()  # Reject an unusable destination before replacing YAML.
+        output = self.install(success=False)
+        self.assertIn("Cannot deploy AI rule file: AI-Gemini.list", output)
+        self.assertEqual(config.read_bytes(), LEGACY.read_bytes())
+        self.assertFalse((self.box / "clash/config.yaml.bak").exists())
+
+    def test_partial_ai_rule_copy_preserves_existing_rule(self):
+        self.install()
+        config = self.box / "clash/config.yaml"
+        original = config.read_bytes()
+        rule = self.box / "clash/rules/AI-Gemini.list"
+        previous = rule.read_bytes()
+        output = self.install(success=False, fail_ai_copy=True)
+        self.assertIn("Cannot deploy AI rule file: AI-Gemini.list", output)
+        self.assertEqual(rule.read_bytes(), previous)
+        self.assertEqual(config.read_bytes(), original)
+        self.assertFalse((self.box / "clash/config.yaml.bak").exists())
+        self.assertEqual(list(rule.parent.glob(".AI-*")), [])
+
     def test_old_core_aborts_before_replacing_device_files(self):
         self.install()
         config = self.box / "clash/config.yaml"
@@ -517,6 +617,15 @@ class RuntimeTests(unittest.TestCase):
         self.cfg["dns"] = {"enable": False}
         self.cfg["sniffer"] = {"enable": False}
         self.cfg["tun"] = {"enable": False}
+        for group in self.cfg["proxy-groups"]:
+            if "url" in group or group["type"] in (
+                "url-test",
+                "fallback",
+                "load-balance",
+            ):
+                # Include select groups such as 特殊地址: their URL also triggers
+                # health checks. An unavailable loopback port keeps checks offline.
+                group["url"] = "http://127.0.0.1:1/health-check"
         for key in ("external-ui", "external-ui-url", "geox-url"):
             self.cfg.pop(key, None)
         self.cfg["profile"] = {"store-selected": True}
@@ -645,13 +754,13 @@ class RuntimeTests(unittest.TestCase):
         except (OSError, EOFError):
             return False
 
-    def udp_request(self):
+    def udp_request(self, target_host="landing.test"):
         control, host, port = connect_socks(self.mixed, "0.0.0.0", 0, command=3)
         with control, socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
             sock.settimeout(0.8)
             packet = (
                 b"\x00\x00\x00"
-                + address("landing.test", self.udp.server_address[1])
+                + address(target_host, self.udp.server_address[1])
                 + b"udp-fixture"
             )
             sock.sendto(packet, ("127.0.0.1" if host == "0.0.0.0" else host, port))

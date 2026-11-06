@@ -1,0 +1,10 @@
+# Microsoft Copilot. Reviewed: 2026-11-06 (Asia/Shanghai).
+# Sources: https://raw.githubusercontent.com/v2fly/domain-list-community/master/data/bing
+# https://learn.microsoft.com/en-us/microsoft-365/copilot/microsoft-copilot-requirements
+# https://learn.microsoft.com/en-us/microsoft-365/copilot/add-copilot-endpoints-allowlist
+# Only dedicated Copilot hosts; no Bing/Microsoft parent domains or shared location API.
+# Shared Office auth, Graph, substrate and Edge update/download hosts stay ordinary.
+# Bing/Edge/Office features on shared hosts may need client-specific follow-up.
+DOMAIN-SUFFIX,copilot.microsoft.com
+DOMAIN-SUFFIX,copilot.cloud.microsoft
+DOMAIN-SUFFIX,copilot.com

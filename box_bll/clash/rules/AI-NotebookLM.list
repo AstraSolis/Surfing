@@ -1,0 +1,10 @@
+# NotebookLM. Reviewed: 2026-11-06 (Asia/Shanghai).
+# Source: https://raw.githubusercontent.com/v2fly/domain-list-community/master/data/google-deepmind
+# Imports via Drive/YouTube and shared storage retain their normal routes.
+DOMAIN-SUFFIX,notebooklm.google.com
+DOMAIN-SUFFIX,notebooklm.google
+DOMAIN-SUFFIX,notebook.google.com
+DOMAIN-SUFFIX,notebook.google
+DOMAIN,notebooklm-pa.googleapis.com
+DOMAIN,notebooklm.googleapis.com
+DOMAIN,labstailwind.pa.googleapis.com

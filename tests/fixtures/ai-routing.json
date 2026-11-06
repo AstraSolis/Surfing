@@ -1,0 +1,181 @@
+{
+  "services": {
+    "OpenAI": [
+      "chatgpt.com",
+      "ws.chatgpt.com",
+      "chat.com",
+      "api.openai.com",
+      "auth.openai.com",
+      "cdn.oaistatic.com",
+      "files.oaiusercontent.com",
+      "chatgpt.livekit.cloud",
+      "openaiassets.blob.core.windows.net",
+      "oaistatsig.com",
+      "cdn.openaimerge.com",
+      "openai.com.cdn.cloudflare.net",
+      "openaiapi-site.azureedge.net",
+      "openaicom-api-bdcpf8c6d2e9atf6.z01.azurefd.net",
+      "openaicom.imgix.net",
+      "openaicomproductionae4b.blob.core.windows.net",
+      "production-openaicom-storage.azureedge.net",
+      "chatgpt-async-webps-prod-eastus-1.webpubsub.azure.com",
+      "chatgpt-async-webps-prod-westus3-12.webpubsub.azure.com"
+    ],
+    "Gemini": [
+      "gemini.google.com",
+      "gemini.google",
+      "bard.google.com",
+      "gemini.gstatic.com",
+      "geminiweb-pa.clients.google.com",
+      "geminiweb-pa.clients6.google.com",
+      "robinfrontend-pa.googleapis.com",
+      "appsgenaiserver-pa.googleapis.com",
+      "appsgenaiserver-pa.clients.google.com",
+      "appsgenaiserver-pa.clients6.google.com"
+    ],
+    "AI Studio": [
+      "aistudio.google.com",
+      "ai.studio",
+      "makersuite.google.com",
+      "generativelanguage.googleapis.com",
+      "alkalicore-pa.clients6.google.com",
+      "alkalimakersuite-pa.clients6.google.com",
+      "webchannel-alkalimakersuite-pa.clients6.google.com"
+    ],
+    "NotebookLM": [
+      "notebooklm.google.com",
+      "notebooklm.google",
+      "notebook.google.com",
+      "notebook.google",
+      "notebooklm-pa.googleapis.com",
+      "notebooklm.googleapis.com",
+      "labstailwind.pa.googleapis.com"
+    ],
+    "Claude": [
+      "claude.ai",
+      "api.anthropic.com",
+      "platform.claude.com",
+      "sso.claude.com",
+      "bridge.claudeusercontent.com",
+      "mcp-proxy.anthropic.com"
+    ],
+    "Perplexity": [
+      "www.perplexity.ai",
+      "api.perplexity.ai",
+      "perplexity.com",
+      "pplx.ai",
+      "ppl-ai-file-upload.s3.amazonaws.com",
+      "pplx-res.cloudinary.com"
+    ],
+    "Grok": [
+      "grok.com",
+      "api.x.ai",
+      "grok.x.com"
+    ],
+    "Microsoft Copilot": [
+      "copilot.microsoft.com",
+      "copilot.cloud.microsoft",
+      "copilot.com"
+    ],
+    "GitHub Copilot": [
+      "api.githubcopilot.com",
+      "api.individual.githubcopilot.com",
+      "api.business.githubcopilot.com",
+      "api.enterprise.githubcopilot.com",
+      "copilot-proxy.githubusercontent.com",
+      "origin-tracker.githubusercontent.com",
+      "copilot-workspace.githubnext.com",
+      "copilotprodattachments.blob.core.windows.net"
+    ],
+    "其他AI": [
+      "poe.com",
+      "psc2.cf2.poecdn.net",
+      "chat.mistral.ai",
+      "api.mistral.ai",
+      "openrouter.ai",
+      "api.groq.com"
+    ]
+  },
+  "ordinary": {
+    "Google": [
+      "www.google.com",
+      "accounts.google.com",
+      "mail.google.com",
+      "drive.google.com",
+      "photos.google.com",
+      "play.google.com",
+      "apis.google.com",
+      "fonts.gstatic.com",
+      "www.gstatic.com",
+      "lh3.googleusercontent.com",
+      "storage.googleapis.com",
+      "oauth2.googleapis.com",
+      "geller-pa.googleapis.com",
+      "optimizationguide-pa.googleapis.com",
+      "proactivebackend-pa.googleapis.com",
+      "colab.research.google.com",
+      "ai.google.dev",
+      "flow.google.com",
+      "cloudcode-pa.googleapis.com"
+    ],
+    "YouTube": [
+      "www.youtube.com",
+      "i.ytimg.com",
+      "rr1.googlevideo.com"
+    ],
+    "GoogleFCM": [
+      "mtalk.google.com"
+    ],
+    "Microsoft": [
+      "www.bing.com",
+      "edgeservices.bing.com",
+      "login.microsoftonline.com",
+      "outlook.office.com",
+      "location.microsoft.com",
+      "graph.microsoft.com",
+      "substrate.office.com",
+      "config.edge.skype.com",
+      "msedge.api.cdp.microsoft.com"
+    ],
+    "GitHub": [
+      "github.com",
+      "api.github.com",
+      "raw.githubusercontent.com",
+      "objects.githubusercontent.com",
+      "codeload.github.com"
+    ],
+    "Twitter(X)": [
+      "x.com",
+      "pbs.twimg.com"
+    ]
+  },
+  "shared": [
+    "unrelated.blob.core.windows.net",
+    "other-bucket.s3.amazonaws.com",
+    "res.cloudinary.com",
+    "challenges.cloudflare.com",
+    "cdn.auth0.com",
+    "cdn.workos.com",
+    "forwarder.workos.com",
+    "js.stripe.com",
+    "js.intercomcdn.com",
+    "host.livekit.cloud",
+    "turn.livekit.cloud",
+    "registry.npmjs.org",
+    "huggingface.co",
+    "sora.com",
+    "unrelated.webpubsub.azure.com",
+    "chatgpt-async-webps-prod-eastus-x.webpubsub.azure.com",
+    "notchatgpt-async-webps-prod-eastus-1.webpubsub.azure.com",
+    "chatgpt-async-webps-prod-eastus-1.evil.webpubsub.azure.com",
+    "sub.chatgpt-async-webps-prod-eastus-1.webpubsub.azure.com",
+    "chatgpt-async-webps-prod-eastus-1.webpubsub.azure.com.example.invalid",
+    "cdn.openaimerge.com.example.invalid",
+    "ordinary.invalid",
+    "gemini.google.com.example.invalid",
+    "fakegemini.google.invalid",
+    "generativelanguage.example.invalid",
+    "claude.ai.example.invalid",
+    "api.githubcopilot.com.example.invalid"
+  ]
+}

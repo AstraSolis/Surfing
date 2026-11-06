@@ -1,0 +1,15 @@
+# Other overseas AI services. Reviewed: 2026-11-06 (Asia/Shanghai).
+# Sources: https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geosite/poe.list
+# https://docs.mistral.ai/api
+# https://openrouter.ai/docs/api_reference/overview
+# https://console.groq.com/docs/overview
+# A small explicit list, not category-ai-!cn: no model repositories/download ecosystems.
+# Poe
+DOMAIN-SUFFIX,poe.com
+DOMAIN-SUFFIX,poecdn.net
+# Mistral / Le Chat
+DOMAIN-SUFFIX,mistral.ai
+# OpenRouter
+DOMAIN-SUFFIX,openrouter.ai
+# Groq (distinct from xAI Grok)
+DOMAIN-SUFFIX,groq.com

@@ -1,0 +1,9 @@
+# Perplexity. Reviewed: 2026-11-06 (Asia/Shanghai).
+# Sources: https://docs.perplexity.ai/docs/getting-started/quickstart
+# https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geosite/perplexity.list
+# Only the named upload bucket and image account, not all S3/Cloudinary traffic.
+DOMAIN-SUFFIX,perplexity.ai
+DOMAIN-SUFFIX,perplexity.com
+DOMAIN-SUFFIX,pplx.ai
+DOMAIN,ppl-ai-file-upload.s3.amazonaws.com
+DOMAIN,pplx-res.cloudinary.com

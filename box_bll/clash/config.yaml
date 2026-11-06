@@ -300,6 +300,24 @@ proxy-groups:
   - name: OpenAI
     icon: "https://cdn.jsdelivr.net/gh/GitMetaio/Surfing@main/app/icon/OpenAI.svg"
     <<: *proxy_groups
+  - name: Gemini
+    <<: *proxy_groups
+  - name: AI Studio
+    <<: *proxy_groups
+  - name: NotebookLM
+    <<: *proxy_groups
+  - name: Claude
+    <<: *proxy_groups
+  - name: Perplexity
+    <<: *proxy_groups
+  - name: Grok
+    <<: *proxy_groups
+  - name: Microsoft Copilot
+    <<: *proxy_groups
+  - name: GitHub Copilot
+    <<: *proxy_groups
+  - name: 其他AI
+    <<: *proxy_groups
   - name: GitHub
     icon: "https://cdn.jsdelivr.net/gh/GitMetaio/Surfing@main/app/icon/GitHub.svg"
     <<: *proxy_groups
@@ -484,10 +502,38 @@ rule-providers:
     <<: *IPCIDR
     path: ./rules/Apple_IP.mrs
     url: "https://cdn.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@meta/geo-lite/geoip/apple.mrs"
+  # AI 规则经人工审核后随模块更新；不自动跟随远程大合集扩大范围。
+  # 共享登录/CDN/存储父域不纳入；边界和维护方法见 docs/AI-ROUTING.md。
   OpenAI_域:
-    <<: *Domain
-    path: ./rules/OpenAI.mrs
-    url: "https://cdn.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@meta/geo/geosite/openai.mrs"
+    <<: *Local
+    path: ./rules/AI-OpenAI.list
+  Gemini_域:
+    <<: *Local
+    path: ./rules/AI-Gemini.list
+  AIStudio_域:
+    <<: *Local
+    path: ./rules/AI-AIStudio.list
+  NotebookLM_域:
+    <<: *Local
+    path: ./rules/AI-NotebookLM.list
+  Claude_域:
+    <<: *Local
+    path: ./rules/AI-Claude.list
+  Perplexity_域:
+    <<: *Local
+    path: ./rules/AI-Perplexity.list
+  Grok_域:
+    <<: *Local
+    path: ./rules/AI-Grok.list
+  MicrosoftCopilot_域:
+    <<: *Local
+    path: ./rules/AI-MicrosoftCopilot.list
+  GitHubCopilot_域:
+    <<: *Local
+    path: ./rules/AI-GitHubCopilot.list
+  其他AI_域:
+    <<: *Local
+    path: ./rules/AI-Other.list
   Netflix_域:
     <<: *Domain
     path: ./rules/Netflix.mrs
@@ -533,6 +579,17 @@ rules:
   - RULE-SET,GoogleFCM_域,GoogleFCM
   # 广告优先于业务分流，上方保留自定义放行和 GoogleFCM 策略
   - RULE-SET,No-ads-all_域,广告拦截
+  # 专用 AI 域名必须早于 Google/IP、Microsoft、GitHub 等通用规则。
+  - RULE-SET,OpenAI_域,OpenAI
+  - RULE-SET,Gemini_域,Gemini
+  - RULE-SET,AIStudio_域,AI Studio
+  - RULE-SET,NotebookLM_域,NotebookLM
+  - RULE-SET,Claude_域,Claude
+  - RULE-SET,Perplexity_域,Perplexity
+  - RULE-SET,Grok_域,Grok
+  - RULE-SET,MicrosoftCopilot_域,Microsoft Copilot
+  - RULE-SET,GitHubCopilot_域,GitHub Copilot
+  - RULE-SET,其他AI_域,其他AI
   - RULE-SET,YouTube_域,YouTube
   - RULE-SET,Google_域,Google
   - RULE-SET,Google_IP,Google,no-resolve
@@ -555,7 +612,6 @@ rules:
   - RULE-SET,Spotify_域,Spotify
   - RULE-SET,Facebook_域,Facebook
   - RULE-SET,Facebook_IP,Facebook,no-resolve
-  - RULE-SET,OpenAI_域,OpenAI
   - RULE-SET,Apple_域,Apple
   - RULE-SET,Apple_IP,Apple,no-resolve
   - RULE-SET,Microsoft_域,Microsoft

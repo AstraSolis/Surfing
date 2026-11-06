@@ -1,0 +1,7 @@
+# Grok / xAI API. Reviewed: 2026-11-06 (Asia/Shanghai).
+# Sources: https://docs.x.ai/developers/api-reference
+# https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geosite/xai.list
+# Shared x.com/twimg.com endpoints and Grokipedia are intentionally excluded.
+DOMAIN-SUFFIX,grok.com
+DOMAIN-SUFFIX,x.ai
+DOMAIN-SUFFIX,grok.x.com

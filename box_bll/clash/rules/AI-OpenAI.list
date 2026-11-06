@@ -1,0 +1,24 @@
+# OpenAI / ChatGPT. Reviewed: 2026-11-06 (Asia/Shanghai).
+# Sources: https://raw.githubusercontent.com/v2fly/domain-list-community/master/data/openai
+# https://developers.openai.com/api/docs/quickstart
+# https://help.openai.com/en/articles/9247338-network-recommendations-for-chatgpt-errors-on-web-and-apps
+# Scope: service-owned domains and named dedicated resources, not shared CDN parents.
+# Omitted: standalone sora.com, generic LiveKit hosts, third-party telemetry/surveys.
+DOMAIN-SUFFIX,chatgpt.com
+DOMAIN-SUFFIX,chat.com
+DOMAIN-SUFFIX,openai.com
+DOMAIN-SUFFIX,oaistatic.com
+DOMAIN-SUFFIX,oaiusercontent.com
+DOMAIN-SUFFIX,oaistatsig.com
+DOMAIN-SUFFIX,chatgpt.livekit.cloud
+DOMAIN,cdn.openaimerge.com
+DOMAIN-SUFFIX,openai.com.cdn.cloudflare.net
+DOMAIN,openaiapi-site.azureedge.net
+DOMAIN,openaiassets.blob.core.windows.net
+DOMAIN,openaicom-api-bdcpf8c6d2e9atf6.z01.azurefd.net
+DOMAIN,openaicom.imgix.net
+DOMAIN,openaicomproductionae4b.blob.core.windows.net
+DOMAIN,production-openaicom-storage.azureedge.net
+# Community-observed asynchronous connections; constrain both the service prefix
+# and Azure suffix. Do not route other Azure Web PubSub tenants through OpenAI.
+DOMAIN-REGEX,^chatgpt-async-webps-prod-[a-z0-9-]+-[0-9]+\.webpubsub\.azure\.com$

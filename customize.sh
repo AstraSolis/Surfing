@@ -22,6 +22,7 @@ HOSTS_FILE="$BOX_BLL_PATH/clash/etc/hosts"
 HOSTS_PATH="$BOX_BLL_PATH/clash/etc"
 HOSTS_BACKUP="$BOX_BLL_PATH/clash/etc/hosts.bak"
 SURFING_TILE_ZIP="$MODPATH/SurfingTile.zip"
+AI_RULE_NAMES="OpenAI Gemini AIStudio NotebookLM Claude Perplexity Grok MicrosoftCopilot GitHubCopilot Other"
 
 [ "$BOOTMODE" != true ] && abort "Error: Please install via Magisk Manager / KernelSU Manager / APatch"; [ "$KSU" = true ] && [ "$KSU_VER_CODE" -lt "$MIN_KSU_VER" ] && abort "Error: Please update your KernelSU Manager version"; [ "$KSU" = true ] && [ "$KSU_VER_CODE" -lt "$KSU_DIR_VER" ] && service_dir="/data/adb/ksu/service.d" || service_dir="/data/adb/service.d"
 
@@ -212,7 +213,31 @@ set_box_permissions() {
   done
 }
 
+check_ai_rules() {
+  for rule in $AI_RULE_NAMES; do
+    [ -s "$MODPATH/box_bll/clash/rules/AI-$rule.list" ] ||
+      abort "Error: Missing AI rule file: AI-$rule.list"
+  done
+}
+
+deploy_ai_rules() {
+  # 仅更新模块维护的十份默认规则，保留其他规则及 clash/etc 下的个人文件。
+  mkdir -p "$BOX_BLL_PATH/clash/rules" || abort "Error: Cannot create AI rules directory."
+  for rule in $AI_RULE_NAMES; do
+    ai_target="$BOX_BLL_PATH/clash/rules/AI-$rule.list"
+    [ ! -d "$ai_target" ] || abort "Error: Cannot deploy AI rule file: AI-$rule.list"
+    ai_temp=$(mktemp "$BOX_BLL_PATH/clash/rules/.AI-$rule.XXXXXX") ||
+      abort "Error: Cannot stage AI rule file: AI-$rule.list"
+    # 同目录临时文件成功写完才替换，避免复制中断截断现用规则。
+    if ! cp -f "$MODPATH/box_bll/clash/rules/AI-$rule.list" "$ai_temp" || ! mv -f "$ai_temp" "$ai_target"; then
+      rm -f "$ai_temp"
+      abort "Error: Cannot deploy AI rule file: AI-$rule.list"
+    fi
+  done
+}
+
 choose_language
+check_ai_rules
 
 # 升级沿用设备核心，首次安装使用包内核心；先检查再替换任何服务文件。
 LANDING_CORE="$BIN_PATH/clash"
@@ -249,6 +274,8 @@ sync_version_from_module_prop
       [ -f "$HOSTS_FILE" ] && cp -f "$HOSTS_FILE" "$HOSTS_BACKUP"
       mkdir -p "$HOSTS_PATH" && touch "$HOSTS_FILE"
 
+      # 先部署新配置引用的规则；复制失败时不替换设备现用配置。
+      deploy_ai_rules
       cp "$BOX_BLL_PATH/clash/config.yaml" "$BOX_BLL_PATH/clash/config.yaml.bak"
       cp -f "$MODPATH/box_bll/clash/config.yaml" "$BOX_BLL_PATH/clash/"
       cp -f "$MODPATH/box_bll/clash/config.yaml" "$MODPATH/default_config.yaml"

@@ -259,6 +259,28 @@ class ReleaseTests(unittest.TestCase):
             self.assertNotIn(".idea/workspace.xml", archive.namelist())
         self.assertNotIn(b"TEST-ONLY-SECRET", release.encoded(info))
 
+    def test_ai_rules_and_usage_guide_are_packaged(self):
+        self.assertEqual(
+            release.AI_RULE_FILES,
+            {
+                path.relative_to(REPO).as_posix()
+                for path in (REPO / "box_bll/clash/rules").glob("AI-*.list")
+            },
+        )
+        for name in release.AI_RULE_FILES | {"docs/AI-ROUTING.md"}:
+            write(self.root / name, (REPO / name).read_bytes())
+        self.inventory()
+        info = self.build()
+        with zipfile.ZipFile(self.output / info["zipName"]) as archive:
+            for name in release.AI_RULE_FILES | {"docs/AI-ROUTING.md"}:
+                self.assertEqual(archive.read(name), (REPO / name).read_bytes())
+
+    def test_missing_ai_rules_are_rejected(self):
+        (self.root / "box_bll/clash/rules/AI-Gemini.list").unlink()
+        self.inventory()
+        with self.assertRaisesRegex(release.ReleaseError, "missing required files"):
+            self.build()
+
     def test_same_source_build_is_repeatable(self):
         self.build()
         hashes = {path.name: release.file_hash(path) for path in self.output.iterdir()}

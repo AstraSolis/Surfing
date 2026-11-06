@@ -1,0 +1,9 @@
+# Claude / Anthropic API / Claude Code. Reviewed: 2026-11-06 (Asia/Shanghai).
+# Sources: https://code.claude.com/docs/en/network-config
+# https://raw.githubusercontent.com/v2fly/domain-list-community/master/data/anthropic
+# Includes service-owned auth, API, artifacts and download subdomains.
+# GitHub, npm, Google storage, external MCP servers and telemetry stay on normal routes.
+DOMAIN-SUFFIX,anthropic.com
+DOMAIN-SUFFIX,claude.ai
+DOMAIN-SUFFIX,claude.com
+DOMAIN-SUFFIX,claudeusercontent.com

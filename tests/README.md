@@ -1,5 +1,19 @@
 # 功能与发布验证
 
+## AI 分流
+
+准备 Python 3.10+、PyYAML 和主机平台的 mihomo v1.19.33：
+
+```sh
+python tests/test_ai.py --mihomo /path/to/mihomo
+```
+
+测试加载实际配置、十份本地 AI 文件和仓库自带的其他规则缓存，把远程 provider 改为文件读取，订阅替换为本机代理；所有测试主机和代理最终只连接回环地址，不访问真实 AI 服务或账号。先在普通出口核对每个服务组的真实命中，再逐个业务选择家宽，检查认证代理链；`rematch` 会替换连接记录中的原业务组，不能只用家宽连接的 `chains` 判断原始分组。
+
+覆盖 Gemini/AI Studio/NotebookLM 分离、其余 AI 专用端点，普通 Google/YouTube/GitHub/微软服务和共享 CDN 不进入 AI、名称相似的假域名及 Azure 正则边界不误匹配、默认出口、业务间选择独立、直接选择家宽时的 UDP 拒绝和家宽认证失败不回退。每条 AI 规则至少有一个正向运行样例，并校验本地文件、provider、安装和打包清单一致。测试样例在 `fixtures/ai-routing.json`。不传 `--mihomo` 仅检查规则结构，其余运行测试会跳过，不代表完整验证。
+
+下方家宽安装模拟同时检查首次部署十份规则、旧版本缺文件迁移、重复更新、保留旧 YAML/使用新默认两种选择、个人规则和旧缓存保留、包缺 AI 规则时提前中止、规则复制失败时保留现用 YAML，以及部分写入后失败仍保留旧规则并清理临时文件。发布测试检查 AI 文件与说明随包提供、缺规则的包被拒绝。目标 Android 登录、透明代理、语音、实时服务和网络切换仍需设备验收，见 [AI 分流说明](../docs/AI-ROUTING.md)。
+
 ## 家宽落地
 
 安装 Python 3.10+、PyYAML，并准备主机平台的 mihomo 与 BusyBox。核心需要支持 `rematch`，当前验证版本为 v1.19.33。Windows 可使用 Git Bash 或 BusyBox 的 `ash.exe`；实际安装器使用随模块提供的 Android BusyBox。

@@ -1,0 +1,9 @@
+# GitHub Copilot. Reviewed: 2026-11-06 (Asia/Shanghai).
+# Sources: https://docs.github.com/en/copilot/reference/copilot-allowlist-reference
+# https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geosite/github-copilot.list
+# Authentication, api.github.com, repository/LFS downloads and package registries stay GitHub/normal.
+DOMAIN-SUFFIX,githubcopilot.com
+DOMAIN,copilot-proxy.githubusercontent.com
+DOMAIN,origin-tracker.githubusercontent.com
+DOMAIN,copilot-workspace.githubnext.com
+DOMAIN,copilotprodattachments.blob.core.windows.net

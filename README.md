@@ -130,6 +130,8 @@ please update the `com.google.android.webview` component through the Google Play
 
 The fork also supports a fixed authenticated SOCKS5 exit. Select an airport node in **落地前置**, then select **家宽落地** in a service group such as OpenAI. Credentials live only in `/data/adb/box_bll/clash/private/landing.yaml`; the installer preserves this file. This mode rejects UDP and does not fall back to a normal proxy on TCP connection failure. A core supporting `rematch` is required (tested with mihomo v1.19.33). See the [setup and upgrade instructions](README_CN.md#家宽落地固定-socks5-出口).
 
+AI services have separate routing groups, including Gemini, AI Studio and NotebookLM ahead of ordinary Google rules. Each service defaults to `总模式` and can independently select `家宽落地` or an airport node using the existing service-group options. Ten reviewed local rule files ship with the module and are deployed on upgrade. Shared Google, GitHub and CDN parent domains are not routed to the residential exit as a whole. See [AI routing, traffic limits and migration](docs/AI-ROUTING.md).
+
 </details>
 
 #

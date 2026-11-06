@@ -36,6 +36,22 @@ ROOT_PAYLOAD = {
     "README_CN.md",
     "changelog.md",
     "docs/MIGRATION.md",
+    "docs/AI-ROUTING.md",
+}
+AI_RULE_FILES = {
+    f"box_bll/clash/rules/AI-{name}.list"
+    for name in (
+        "OpenAI",
+        "Gemini",
+        "AIStudio",
+        "NotebookLM",
+        "Claude",
+        "Perplexity",
+        "Grok",
+        "MicrosoftCopilot",
+        "GitHubCopilot",
+        "Other",
+    )
 }
 REQUIRED = {
     "module.prop",
@@ -56,10 +72,11 @@ REQUIRED = {
     "box_bll/clash/config.yaml",
     "box_bll/clash/landing.example.yaml",
     "box_bll/clash/rules/LinuxDO.mrs",
+    "docs/AI-ROUTING.md",
     "box_bll/clash/webroot/Zash/index.html",
     "SurfingTile.zip",
     "build-info.json",
-}
+} | AI_RULE_FILES
 
 
 class ReleaseError(RuntimeError):
