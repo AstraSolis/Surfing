@@ -1,113 +1,40 @@
 name: Alpha
-run-name: ${{ github.event.head_commit.message || 'Scheduled Stats Update' }}
+run-name: Alpha · ${{ github.sha }}
 
 on:
   push:
-    branches:
-      - main
-  schedule:
-    - cron: '0 */12 * * *'
+    branches: [main]
 
 permissions:
-  contents: write
+  contents: read
+
+concurrency:
+  group: surfing-alpha-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  Fetch-Data:
+  build:
+    if: github.repository == 'AstraSolis/Surfing'
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout Data Branch
-        uses: actions/checkout@v7
+      - uses: actions/checkout@v7
         with:
-          ref: data
-
-      - name: Update Count
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Check release contracts
         run: |
-          STATE_FILE=".stats_state"
-          if [ ! -f "$STATE_FILE" ]; then
-            echo "API_LAST_COUNT=0" > "$STATE_FILE"
-            echo "BASE_COUNT=35000" >> "$STATE_FILE"
-          fi
-          source "$STATE_FILE"
-
-          RESPONSE=$(curl -s -H "Authorization: Bearer $GITHUB_TOKEN" \
-            https://api.github.com/repos/${{ github.repository }}/releases)
-          CURRENT_COUNT=$(echo "$RESPONSE" | jq '[.[]? | .assets[]? | .download_count] | add // 0')
-
-          if [ "$CURRENT_COUNT" -lt "$API_LAST_COUNT" ]; then
-            LOST_COUNT=$((API_LAST_COUNT - CURRENT_COUNT))
-            BASE_COUNT=$((BASE_COUNT + LOST_COUNT))
-            echo "Detected download count reset. Added $LOST_COUNT to base. New base is $BASE_COUNT."
-          fi
-
-          TOTAL_COUNT=$((CURRENT_COUNT + BASE_COUNT))
-
-          echo "API_LAST_COUNT=$CURRENT_COUNT" > "$STATE_FILE"
-          echo "BASE_COUNT=$BASE_COUNT" >> "$STATE_FILE"
-
-          if [ $TOTAL_COUNT -ge 1000 ]; then
-            DISPLAY_COUNT=$(echo "scale=1; $TOTAL_COUNT/1000" | bc | sed 's/\.0$//')k
-          else
-            DISPLAY_COUNT=$TOTAL_COUNT
-          fi
-
-          jq ".message = \"$DISPLAY_COUNT\"" stats.json > temp.json && mv temp.json stats.json
-
-      - name: Push Changes
-        run: |
-          git config --local user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git config --local user.name "github-actions[bot]"
-          git add stats.json .stats_state
-          git commit -m "chore: sync download metrics to data" || exit 0
-          git push origin data
-
-  Prerelease-Build:
-    needs: Fetch-Data
-    if: ${{ github.event_name == 'push' }}
-    runs-on: ubuntu-latest
-
-    env:
-      isAlpha: true
-      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v7
+          python tools/release.py check
+          python -m unittest discover -s tests -p test_release.py -v
+      - name: Build manual-test Alpha
+        run: sh build.sh --channel alpha
+      - name: Preserve verified bundle
+        uses: actions/upload-artifact@v4
         with:
-          submodules: recursive
-          ref: main
-
-      - name: Set Timestamp
-        id: set_timestamp
-        run: echo "TIMESTAMP=$(TZ='Asia/Shanghai' date +'%Y-%m-%d %H:%M:%S')" >> $GITHUB_ENV
-
-      - name: Get Short Commit Hash
-        run: echo "SHORT_HASH=${GITHUB_SHA::7}" >> $GITHUB_ENV
-
-      - name: Run build.sh
-        run: sh build.sh
-
-      - name: Delete current prerelease assets
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          gh release view Prerelease-Alpha --json assets --jq '.assets[].name' | xargs -I {} gh release delete-asset Prerelease-Alpha "{}" -y || echo "No assets to delete"
-
-      - name: Tag Repo
-        uses: richardsimko/update-tag@v3
-        with:
-          tag_name: Prerelease-Alpha
-
-      - name: Upload Prerelease
-        uses: softprops/action-gh-release@v3
-        if: success()
-        with:
-          tag_name: Prerelease-Alpha
-          files: Surfing_alpha_${{ env.SHORT_HASH }}.zip
-          prerelease: true
-          generate_release_notes: true
-          body: |
-            Synchronize the latest code updates of branches and keep only the latest version  
-            
-            Release Timestamp: ${{ env.TIMESTAMP }}
+          name: Surfing-alpha-${{ github.sha }}-${{ github.run_attempt }}
+          path: dist/alpha/*
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 0

@@ -4,5 +4,10 @@
 # Device-only SOCKS5 credentials
 /box_bll/clash/private/
 
-# Local Python test bytecode
-/tests/__pycache__/
+# Local build and verification output
+__pycache__/
+/dist/
+/.ruff_cache/
+/Surfing_*.zip
+/SurfingTile.zip
+/.source-snapshot.json

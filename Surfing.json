@@ -1,7 +1,6 @@
 {
-    "version": "v7.8.4",
-    "versionCode": 1653,
-    "zipUrl": "https://github.com/GitMetaio/Surfing/releases/latest/download/Surfing_v7.8.4_release.zip",
-    "changelog": "https://raw.githubusercontent.com/GitMetaio/Surfing/main/changelog.md"
+  "changelog": "https://github.com/AstraSolis/Surfing/releases/download/v7.8.4-astra.1/changelog.md",
+  "version": "v7.8.4-astra.1",
+  "versionCode": 1654,
+  "zipUrl": "https://github.com/AstraSolis/Surfing/releases/download/v7.8.4-astra.1/Surfing_v7.8.4-astra.1_release.zip"
 }
- 

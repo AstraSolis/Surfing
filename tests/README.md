@@ -1,4 +1,6 @@
-# 家宽落地验证
+# 功能与发布验证
+
+## 家宽落地
 
 安装 Python 3.10+、PyYAML，并准备主机平台的 mihomo 与 BusyBox。核心需要支持 `rematch`，当前验证版本为 v1.19.33。Windows 可使用 Git Bash 或 BusyBox 的 `ash.exe`；实际安装器使用随模块提供的 Android BusyBox。
 
@@ -24,10 +26,35 @@ git diff --check
 
 `customize.sh` 还需运行 ShellCheck 与 BusyBox `ash -n`；ShellCheck 的原有提示包含安装器读取的全局变量（SC2034）和 `print_lang` 的短路表达式（SC2015），与新增逻辑分别核对。
 
-真实构建应在临时源码副本中执行，避免下载依赖和修改 `module.prop` 污染工作区。需要 curl、gzip、unzip、Info-ZIP zip 和基本 Unix 工具。可以显式固定版本，避免 GitHub API 限流并复现依赖选择：
+## 发布链路
+
+新增发布测试只用 Python 3.10+ 标准库。所有依赖下载和 GitHub 写操作使用离线替身，不访问真实账号或发布 API：
 
 ```sh
-MIHOMO_VERSION=v1.19.33 ZASH_VERSION=v3.30.0 SHORT_HASH=<source-commit> sh build.sh
+python tools/release.py check
+python -m unittest discover -s tests -p test_release.py -v
+ruff check tools tests
+ruff format --check tools tests
+shellcheck -s sh build.sh
+actionlint .github/workflows/prerelease.yml .github/workflows/release.yml
+git diff --check
 ```
 
-不指定版本时仍使用 GitHub API 获取最新版本。curl 来自原有下载地址，需另记 SHA-256；同时记录核心、Zashboard、APK 和成品的版本/哈希。构建检查需验证 ZIP CRC、必需文件、SurfingTile 子包，以及私有账号、tests、IDE 文件和旧构建包没有进入 ZIP。应在临时副本放入虚拟账号，并预先创建带虚拟私密条目的同名旧 ZIP，验证重新构建也能清除旧条目。此验证不发布，也不修改模块更新渠道。
+覆盖稳定/Alpha 代码号及更新源、标签和清单不匹配、固定依赖/缓存损坏、APK 清单不一致、源码快照变化、ZIP 内容/校验和、凭据和旧条目排除、确定输入重复构建、未提交包禁止发布、远端标签校验、首次发布、版本号不递增、上传中断与草稿续传、已发布版本重跑不回退 latest、已有附件不覆盖、GitHub 未返回摘要时下载核验。它们不能证明 GitHub 真实权限、模块管理器更新行为或 Android 安装已经通过。
+
+真实依赖构建必须在工作区外的源码快照中执行。新构建使用 Python 标准库，按 `release/dependencies.json` 下载固定 mihomo、curl、Zashboard 并校验 SHA-256；BusyBox 来自源码，SurfingTile APK 根据现有版本清单验证。
+
+```sh
+python tools/release.py snapshot /tmp/surfing-release-review
+cd /tmp/surfing-release-review
+sh build.sh --channel stable
+sh build.sh --channel alpha
+python tools/release.py verify dist/stable
+python tools/release.py verify dist/alpha
+```
+
+Windows 也可直接运行副本中的 `python tools/release.py build --channel stable`；Git Bash 可用 `PYTHON` 指定解释器。旧的版本/提交环境变量会导致构建拒绝，依赖更新必须改锁文件并复核。输出的 `build-info.json` 记录实际源码、dirty 状态、工具链、关键依赖及包内文件哈希；`SHA256SUMS` 记录发布资产摘要。相同输入在同一工具链下重建应一致。
+
+真实构建还应在快照内放入**虚拟** `box_bll/clash/private/landing.yaml`，预先创建带虚拟私密条目的同名旧 ZIP，验证新包没有这些条目，也没有 tests、IDE、工具和维护文件。检查 ZIP CRC、必需文件、ARM64 二进制与 SurfingTile 子包，比较包内配置、安装器和家宽脚本与当前源码。不要在快照创建后修改其输入文件；改动源码需重新导出。
+
+若要验证构建失败、版本号错误和重复发布，可运行离线测试；不要调用 `tools/publish_release.py` 对真实仓库进行试发布。首次稳定发布及其设备验证仍须按 [发布流程](../docs/RELEASING.md) 获得对应授权。

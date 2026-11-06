@@ -1,17 +1,20 @@
 <h1 align="center">
   <img src="./folder/logo.svg" alt="logo" width="200">
-  <br>Surfing<br>
+  <br>Surfing · AstraSolis 定制版<br>
 </h1>
 
 <h3 align="center">Magisk, Kernelsu, APatch</h3>
 
 <div align="center">
-    <a href="https://github.com/GitMetaio/Surfing/releases/tag/Prerelease-Alpha">
-        <img alt="Android" src="https://img.shields.io/badge/Module Latestsnapshot-F05033.svg?logo=android&logoColor=white">
+    <a href="https://github.com/AstraSolis/Surfing/releases/latest">
+        <img alt="Stable" src="https://img.shields.io/github/v/release/AstraSolis/Surfing?label=Stable">
     </a>
-    <a href="https://github.com/GitMetaio/Surfing/releases">
-    <img alt="Downloads" src="https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/GitMetaio/Surfing/data/stats.json">
-</a>
+    <a href="https://github.com/AstraSolis/Surfing/actions/workflows/prerelease.yml">
+        <img alt="Alpha" src="https://img.shields.io/github/actions/workflow/status/AstraSolis/Surfing/prerelease.yml?branch=main&label=Alpha">
+    </a>
+    <a href="https://github.com/AstraSolis/Surfing/releases">
+        <img alt="Downloads" src="https://img.shields.io/github/downloads/AstraSolis/Surfing/total">
+    </a>
 </div>
 <br>
 <div align="center">
@@ -22,10 +25,11 @@
 
 本项目为 Clash/mihomo 的 [Magisk](https://github.com/topjohnwu/Magisk) 、 [Kernelsu](https://github.com/tiann/KernelSU) 、 [APatch](https://github.com/bmax121/APatch) 模块。支持 REDIRECT（仅 TCP）、TPROXY（TCP + UDP）透明代理，支持 TUN（TCP + UDP）亦可 REDIRECT（TCP）+ TUN（UDP） 混合模式代理。
 
-基于上游为集成式一体服务、开箱即用   
-此适用以下人群：
-- 懒癌
-- 小白
+这是 [AstraSolis](https://github.com/AstraSolis/Surfing) 维护的个人定制版，基于 [GitMetaio/Surfing](https://github.com/GitMetaio/Surfing)，保留原作者署名、来源和 [GPL-3.0 许可证](LICENSE)。持续评估并经确认接收上游更新。
+
+定制功能包括 **Linux.do 独立分流**、**广告默认拦截及规则优先级调整**、**固定 SOCKS5 家宽落地**。家宽使用独立前置、拒绝 UDP、连接失败不回退，账号保存在设备私有文件并在升级时保留。已有策略记忆可能保留广告 `PASS`，请在面板核对。
+
+模块管理器默认跟随本 Fork 的稳定版；Alpha 供主动测试。从上游切换必须先手动覆盖安装一次新定制 ZIP。查看 [迁移和数据保留指南](docs/MIGRATION.md)、[发布维护说明](docs/RELEASING.md) 和 [定制更新日志](changelog.md)。
 
 项目主题及配置仅围绕 [Clash/mihomo.Meta](https://github.com/MetaCubeX/Clash.Meta)  
 
@@ -65,16 +69,18 @@
 
 ## 安装
 
-- 从 [Release](https://github.com/GitMetaio/Surfing/releases) 页下载模块压缩包，然后通过 Magisk Manager 或 KernelSU Manager 或 APatch 安装
-- 各版本变化 [📲日志.log](changelog.md)
+- 从 [Fork 稳定 Release](https://github.com/AstraSolis/Surfing/releases/latest) 下载 `Surfing_<版本>_release.zip`，核对同一版本的 `SHA256SUMS`，通过 Magisk Manager、KernelSU Manager 或 APatch 覆盖安装。不要选择 GitHub 的 “Source code (zip)”。
+- 首次稳定版目标为 `v7.8.4-astra.1` / `versionCode=1654`；首次公开发布前稳定入口可能返回 404。旧 `Surfing_alpha_320a690.zip` 仍使用上游更新地址，不是本次渠道迁移包。
+- 安装前备份 `/data/adb/box_bll`，确认设备 mihomo 支持 `rematch`（验证基础 v1.19.33）。升级保留设备核心；建议选择“使用新默认配置”获得定制组，再检查订阅、网络设置、私有账号并重启。完整步骤见 [迁移指南](docs/MIGRATION.md)。
+- [Alpha Actions](https://github.com/AstraSolis/Surfing/actions/workflows/prerelease.yml) 提供 30 天有效的手动测试产物，通常需登录 GitHub；解压下载的外层归档后，安装其中的模块 ZIP。
 
 ## 卸载
 
- - 从 Magisk Manager 、Kernelsu Manager 、APatch 应用卸载本模块即可 [👉🏻铲屎流程](https://github.com/GitMetaio/Surfing/blob/main/uninstall.sh#L3-L4)
+ - 从 Magisk Manager、KernelSU Manager、APatch 应用卸载本模块即可，详见 [卸载脚本](uninstall.sh)。切换定制版不需要先卸载。
 
 > 通过管理器卸载本模块，会卸载所有相应的服务数据，Web 等 SurfingTile 磁贴应用数据
 
-## Group Telegram
+## 上游 Telegram 交流
 
 <a href="https://t.me/Surfingbox">
   <img src="./folder/Group.png" alt="Group" width="100">
@@ -118,10 +124,8 @@
 <details>
 <summary>3. 路由规则</summary>
 
-- GitHub Actions 自动构建  
-  路由规则全系在线订阅，保证规则最新
-
-> 24小时自动更新
+- mihomo 按配置中的 provider URL 和刷新间隔更新远程规则，默认间隔 24 小时；本地自定义规则保留在设备 `clash/etc/`。
+- 本 Fork 增加 Linux.do 规则与策略组，保留上游图标、第三方规则来源；规则下载与模块稳定发布是独立机制。
 
 </details>
 
@@ -130,17 +134,10 @@
 <details>
 <summary>4. 后续更新</summary>
 
-- 如果你全部使用默认配置，更新将是无感
-- 支持在客户端中在线更新模块，更新后无须重启，但仍需建议重启
-- 更新时配置文件会备份至
-   - `config.yaml.bak`
-- 更新时会备份旧文件用户配置，至
-   - `box.config.bak`
-- 更新时会自动提取你的订阅地址并备份，至
-   - `proxies/subscribe_urls_backup.txt`
-   - 自动提取备份并恢复至新配置中，适用于使用默认配置文件
-
-> Ps：主要跟随上游更新，及下发一些配置
+- 手动安装迁移包后，模块管理器从 `https://github.com/AstraSolis/Surfing/releases/latest/download/Surfing.json` 检查稳定更新；普通 main 提交只产生 Alpha。
+- 每次升级先另存备份。安装器会生成 `config.yaml.bak`、`box.config.bak`，并尝试提取、恢复 `proxies/subscribe_urls_backup.txt`；仅迁移指定网络变量，不保证所有个人修改自动恢复。
+- 保留旧 YAML 不会自动添加新功能；选新默认时需核对自己的 DNS、端口、hosts 和规则。升级后建议重启设备并复核业务流量。
+- mihomo、Zashboard 与 SurfingTile 的更新机制分别独立。**本次没有迁移 APK 内置更新**；当前 APK 只有预编译文件，App 在线配置覆写入口也需另行核实，不能据此保证定制组被保留。详见 [组件更新边界](docs/MIGRATION.md#更新机制的边界)。
 
 </details>
 
@@ -254,14 +251,14 @@
 > 通过长按首页图标 开启/关闭 **金牌特权**
 
 - 预览
-  ![程序界面](folder/SurfingTilePreviewImage.png)
+  ![程序界面](folder/SurfingTilePreview.png)
 
 </details>
 
 ---
 
 <a href="./LICENSE">
-    <img alt="License" src="https://img.shields.io/github/license/GitMetaio/Surfing.svg">
+    <img alt="License" src="https://img.shields.io/github/license/AstraSolis/Surfing.svg">
 </a>
 
 ## 致谢

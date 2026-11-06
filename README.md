@@ -1,17 +1,20 @@
 <h1 align="center">
   <img src="./folder/logo.svg" alt="logo" width="200">
-  <br>Surfing<br>
+  <br>Surfing · AstraSolis Edition<br>
 </h1>
 
 <h3 align="center">Magisk, Kernelsu, APatch</h3>
 
 <div align="center">
-    <a href="https://github.com/GitMetaio/Surfing/releases/tag/Prerelease-Alpha">
-        <img alt="Android" src="https://img.shields.io/badge/Module Latestsnapshot-F05033.svg?logo=android&logoColor=white">
+    <a href="https://github.com/AstraSolis/Surfing/releases/latest">
+        <img alt="Stable" src="https://img.shields.io/github/v/release/AstraSolis/Surfing?label=Stable">
     </a>
-    <a href="https://github.com/GitMetaio/Surfing/releases">
-    <img alt="Downloads" src="https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/GitMetaio/Surfing/data/stats.json">
-</a>
+    <a href="https://github.com/AstraSolis/Surfing/actions/workflows/prerelease.yml">
+        <img alt="Alpha" src="https://img.shields.io/github/actions/workflow/status/AstraSolis/Surfing/prerelease.yml?branch=main&label=Alpha">
+    </a>
+    <a href="https://github.com/AstraSolis/Surfing/releases">
+        <img alt="Downloads" src="https://img.shields.io/github/downloads/AstraSolis/Surfing/total">
+    </a>
 </div>
 <br>
 <div align="center">
@@ -22,9 +25,11 @@
 
 This project is a [Magisk](https://github.com/topjohnwu/Magisk), [Kernelsu](https://github.com/tiann/KernelSU), [APatch](https://github.com/bmax121/APatch) module for Clash/mihomo. It supports REDIRECT (TCP only), TPROXY (TCP + UDP) transparent proxy, TUN (TCP + UDP), and hybrid mode REDIRECT (TCP) + TUN (UDP) proxy.
 
-Based on upstream integration for one-stop service, ready to use. Suitable for:
-- Lazy people
-- Beginners
+This is a personal edition maintained by [AstraSolis](https://github.com/AstraSolis/Surfing), based on [GitMetaio/Surfing](https://github.com/GitMetaio/Surfing). Upstream authorship, source history and the [GPL-3.0 license](LICENSE) are retained. Upstream updates are reviewed before merging.
+
+Custom features include **Linux.do routing**, **default ad blocking and rule priority adjustments**, and a **fixed authenticated SOCKS5 exit** with a separate upstream selector, UDP rejection, no fallback on connection failure, and private credentials preserved during upgrades. Existing selection history may retain ad-blocking `PASS`; check the panel.
+
+Module managers follow this fork's stable releases. Alpha builds are for manual testing. Switching from upstream requires one manual installation of a new custom ZIP. See the [migration guide](docs/MIGRATION.md), [release maintenance guide](docs/RELEASING.md) and [custom changelog](changelog.md).
 
 The project's theme and configuration focus on [Clash/mihomo.Meta](https://github.com/MetaCubeX/Clash.Meta).
 
@@ -62,17 +67,19 @@ Please decide whether to use the Surfing module only after clearly understanding
 
 ## Installation
 
-- Download the module zip file from the [Release](https://github.com/GitMetaio/Surfing/releases) page and install it via Magisk Manager, KernelSU Manager, or APatch.
-- Version changes: [📲log](changelog.md)
+- Download `Surfing_<version>_release.zip` from this [fork's stable release](https://github.com/AstraSolis/Surfing/releases/latest), check its `SHA256SUMS`, and install through Magisk Manager, KernelSU Manager or APatch. Do not install GitHub's “Source code (zip)”.
+- The first stable target is `v7.8.4-astra.1`, versionCode `1654`. The stable endpoint may return 404 until its first publication. The old `Surfing_alpha_320a690.zip` still follows upstream updates and does not migrate the channel.
+- Back up `/data/adb/box_bll` first; keep backups and credentials private. Update the device's existing mihomo to a version supporting `rematch` (tested with v1.19.33). Upgrade installation retains the device core. Install over the existing module, choose the new default config to obtain custom groups, verify subscriptions/settings/credentials, then reboot. Do not uninstall first.
+- [Alpha Actions](https://github.com/AstraSolis/Surfing/actions/workflows/prerelease.yml) offers manual test artifacts for 30 days, generally requiring GitHub sign-in. Extract the downloaded artifact and install the module ZIP inside, not the outer artifact archive.
 
 ## Uninstall
 
 - Uninstall this module directly from **Magisk Manager / KernelSU Manager / APatch**  
-  [👉🏻 Force Remove Script](https://github.com/GitMetaio/Surfing/blob/main/uninstall.sh#L3-L4)
+  [Uninstall script](uninstall.sh). Uninstalling is not required to switch to this fork.
 
 > Uninstalling this module via the manager will remove all related service data, including Web and SurfingTile tile app data.
 
-## Group Telegram
+## Upstream Telegram Community
 
 <a href="https://t.me/Surfingbox">
   <img src="./folder/Group.png" alt="Group" width="100">
@@ -118,10 +125,8 @@ please update the `com.google.android.webview` component through the Google Play
 <details>
 <summary>3. Routing Rules</summary>
 
-- GitHub Actions builds automatically  
-  All routing rules use online subscriptions to ensure they are always up-to-date
-
-> Automatically updates every 24 hours
+- mihomo refreshes remote rules using their provider URLs and configured intervals (24 hours by default). Local custom rules remain in the device's `clash/etc/` directory.
+- The fork adds Linux.do routing and retains upstream icons and third-party rule sources. Rule refreshes are independent of module releases.
 
 The fork also supports a fixed authenticated SOCKS5 exit. Select an airport node in **落地前置**, then select **家宽落地** in a service group such as OpenAI. Credentials live only in `/data/adb/box_bll/clash/private/landing.yaml`; the installer preserves this file. This mode rejects UDP and does not fall back to a normal proxy on TCP connection failure. A core supporting `rematch` is required (tested with mihomo v1.19.33). See the [setup and upgrade instructions](README_CN.md#家宽落地固定-socks5-出口).
 
@@ -132,17 +137,10 @@ The fork also supports a fixed authenticated SOCKS5 exit. Select an airport node
 <details>
 <summary>4. Future Updates</summary>
 
-- If you are using all default configurations, updates will be seamless.
-- Supports online updates from the client; reboot is not required, but still recommended.
-- During updates, configuration files will be backed up to:
-   - `config.yaml.bak`
-- User configuration files will be backed up to:
-   - `box.config.bak`
-- Subscription URLs will be automatically extracted and backed up to:
-   - `proxies/subscribe_urls_backup.txt`
-   - The backup will be automatically restored into the new configuration, suitable for default configuration usage.
-
-> Ps: Mainly follows upstream updates and pushes some configuration adjustments.
+- After one manual channel-migration installation, module managers check `https://github.com/AstraSolis/Surfing/releases/latest/download/Surfing.json`. Normal main pushes produce only Alpha artifacts.
+- Make an independent backup before every upgrade. The installer creates `config.yaml.bak`, `box.config.bak` and attempts to restore the marked subscription block through `proxies/subscribe_urls_backup.txt`; only the selected network variables are migrated automatically.
+- Keeping the old YAML does not add new custom groups. Choosing the new defaults requires checking personal DNS, ports, hosts and rules. Reboot and verify actual traffic after upgrading.
+- mihomo, Zashboard and SurfingTile have separate update mechanisms. **APK built-in updates have not been migrated.** This branch has only the current APK binary and its manifest; App configuration overrides also need separate verification. See the [component update boundaries](docs/MIGRATION.md#更新机制的边界).
 
 </details>
 
@@ -234,7 +232,7 @@ Android user group IDs:
 ---
 
 <a href="./LICENSE">
-    <img alt="License" src="https://img.shields.io/github/license/GitMetaio/Surfing.svg">
+    <img alt="License" src="https://img.shields.io/github/license/AstraSolis/Surfing.svg">
 </a>
 
 ## Acknowledgements

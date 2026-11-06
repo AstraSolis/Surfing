@@ -1,53 +1,48 @@
 name: Release
+run-name: Stable · ${{ github.ref_name }}
 
 on:
   push:
-    paths:
-      - 'Surfing.json'
+    tags: ['v*-astra.*']
 
 permissions:
-  contents: write
+  contents: read
+
+concurrency:
+  group: surfing-stable-release
+  cancel-in-progress: false
 
 jobs:
-  Production-Build:
+  release:
+    if: github.repository == 'AstraSolis/Surfing'
     runs-on: ubuntu-latest
-
-    env:
-      isAlpha: false
-      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
+    permissions:
+      contents: write
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v7
+      - uses: actions/checkout@v7
         with:
-          submodules: recursive
-
-      - name: Get Version number
-        id: version
-        run: |
-          version=$(grep 'version=' module.prop | awk -F '=' '{print $2}' | sed 's/ (.*)//')
-          echo "TAG_NAME=${version}" >> $GITHUB_ENV
-          echo "Version extracted: ${version}"
-
-      - name: Run build.sh
-        run: sh build.sh
-
-      - name: Determine Tag Name
-        id: tag
-        run: echo "TAG_NAME=${{ env.TAG_NAME }}" >> $GITHUB_ENV
-
-      - name: Get Latest Changelog
-        id: changelog
-        run: |
-          latest_version=$(grep -m1 '^# v[0-9.]\+' changelog.md | sed 's/# v//')
-          sed -n "/^# v${latest_version}/,/^# v[0-9.]\+/p" changelog.md | sed -e "/^# v${latest_version}/d" -e "/^# v[0-9.]\+/d" > release_notes.txt
-          echo "# What's Changed" | cat - release_notes.txt > temp && mv temp release_notes.txt
-          echo "CHANGELOG=release_notes.txt" >> $GITHUB_ENV
-
-      - name: Upload Release
-        uses: softprops/action-gh-release@v3
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@v6
         with:
-          tag_name: ${{ env.TAG_NAME }}
-          files: Surfing_${{ env.TAG_NAME }}_release.zip
-          generate_release_notes: false
-          body_path: release_notes.txt
+          python-version: '3.12'
+      - name: Check tag and release contracts
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          python tools/release.py check --tag "$RELEASE_TAG"
+          python -m unittest discover -s tests -p test_release.py -v
+      - name: Build stable bundle
+        run: sh build.sh --channel stable
+      - name: Preserve verified bundle before publishing
+        uses: actions/upload-artifact@v4
+        with:
+          name: Surfing-stable-${{ github.ref_name }}-${{ github.run_attempt }}
+          path: dist/stable/*
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 0
+      - name: Upload draft, verify all assets, then publish stable
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python tools/publish_release.py dist/stable

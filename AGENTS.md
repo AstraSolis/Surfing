@@ -104,11 +104,11 @@
 
 ## 构建、更新渠道与发布
 
-- 接手时 `module.prop` 的 `updateJson`、`Surfing.json` 的下载和日志地址仍指向原作者。首次发布个人版前，应提出 Fork 更新渠道、版本号、发布标签和文件名的配套方案，经用户同意后修改，避免设备更新后换回上游版本。
+- 定制版 `module.prop` 的 `updateJson` 指向 `https://github.com/AstraSolis/Surfing/releases/latest/download/Surfing.json`，只跟随已发布稳定版；标签、ZIP 和日志保持对应。版本维护来源为 `module.prop`，仓库根 `Surfing.json` 用 `python tools/release.py sync` 生成，仅作预览。详细流程见 [docs/RELEASING.md](docs/RELEASING.md)，合并上游时不要覆盖回原作者的发行渠道。
 - 不为维护 Fork 而批量替换所有上游链接。区分模块更新渠道、说明文档、图标、规则源及第三方依赖，逐项决定是否需要调整。
-- `build.sh` 会下载最新 mihomo、curl、Zashboard，产生文件并改写 `module.prop`，不能作为只读检查执行。同一 Git 提交的构建结果可能因远程依赖更新而不同，发布验证应记录实际使用的依赖版本。
-- 打包采用“整个目录加排除项”的方式。新增 `AGENTS.md` 等维护文件和本地输出可能进入 ZIP；后续调整发布流程时评估排除项，不在未获授权时顺带修改构建脚本。
-- Fork 启用 Actions 后，推送 `main` 可触发 Alpha 构建，删除旧 Alpha 附件、更新标签并发布；该流程还依赖 `data` 分支更新统计。修改 `Surfing.json` 的推送可触发正式发布。
+- `build.sh` 调用 `tools/release.py`，下载并校验 `release/dependencies.json` 固定的 mihomo、curl、Zashboard，在 `dist/` 输出新建 ZIP、清单、日志和源码/依赖/产物校验信息，不再改写源码 `module.prop`。构建仍不属于只读检查，验证应在工作区外的源码快照执行；未提交构建标记 dirty，禁止发布。
+- 打包从源码清单选择运行文件，排除私有账号、旧 ZIP、测试、开发工具及维护文档；迁移指南随包提供。新增运行文件仍需核对 ZIP 和安装器部署，不能假定目录一定被复制。必须保留私有凭据排除与重新创建 ZIP 的保护。
+- 新流程中，推送 `main` 只触发 Alpha Actions artifact，不删除 Release 附件、不移动标签、不读写 `data`；修改根 `Surfing.json` 不再触发正式发布。推送 `v*-astra.*` 标签会触发稳定构建，上传并验证草稿附件后自动公开 Release、更新 latest；创建标签和推送标签及其发布后果必须分别取得明确授权。旧 `Prerelease-Alpha` 不再维护，保留原状。
 - `cleanup.yml` 会删除历史工作流运行记录，手动触发时保留数量为零。启用、手动触发或调整这些工作流前，说明具体影响并取得对应授权。
 - `folder/SurfingTile.tar.gz` 是旧的 `com.yadli.surfingtile` 工程。它不能视为当前 `com.github.surfing` APK 的对应源码；涉及当前 App 内部功能时，先确认源码来源和版本。
 - `webroot/index.html` 不是完整面板源码。涉及面板功能时，先确认需求落在跳转入口、外部 Zashboard 还是 SurfingTile 中。
