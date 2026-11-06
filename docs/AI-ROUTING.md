@@ -30,6 +30,12 @@
 
 域名归类以实际请求的主机为准，不以客户端名称或使用的模型品牌为准。例如经 OpenRouter 调用 Claude 归 `其他AI`；经第三方网关、Azure 或 Vertex AI 访问模型，不自动归入原厂 API 策略。
 
+## 策略组图标
+
+各组通过 `icon` URL 加载 SVG。OpenAI 保留原有图标，其他AI复用现有 `Ai.svg`；其余八组使用 Fork 中分别维护的文件，Microsoft Copilot 与 GitHub Copilot 使用不同产品标识。图标来源、审核日期、处理方式和许可记录在源码仓库的 `app/icon/AI-SOURCES.md`、`app/icon/AI-LICENSES.txt`。
+
+新增文件通过 GitHub Raw 读取，必须与配置一起提交并推送到 Fork 的 `main` 后，远程地址才可用。图标源文件不随模块部署到设备；面板需要联网读取。图标下载失败不改变对应策略组的分流行为。
+
 ## 节流边界
 
 - 不使用 `google.com`、`googleapis.com`、`gstatic.com`、`googleusercontent.com`、`github.com`、`githubusercontent.com`、`bing.com`、`microsoft.com`、`x.com` 等公共父域覆盖 AI；具体的专用子域可以纳入。

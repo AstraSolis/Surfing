@@ -301,22 +301,31 @@ proxy-groups:
     icon: "https://cdn.jsdelivr.net/gh/GitMetaio/Surfing@main/app/icon/OpenAI.svg"
     <<: *proxy_groups
   - name: Gemini
+    icon: "https://raw.githubusercontent.com/AstraSolis/Surfing/main/app/icon/Gemini.svg"
     <<: *proxy_groups
   - name: AI Studio
+    icon: "https://raw.githubusercontent.com/AstraSolis/Surfing/main/app/icon/AIStudio.svg"
     <<: *proxy_groups
   - name: NotebookLM
+    icon: "https://raw.githubusercontent.com/AstraSolis/Surfing/main/app/icon/NotebookLM.svg"
     <<: *proxy_groups
   - name: Claude
+    icon: "https://raw.githubusercontent.com/AstraSolis/Surfing/main/app/icon/Claude.svg"
     <<: *proxy_groups
   - name: Perplexity
+    icon: "https://raw.githubusercontent.com/AstraSolis/Surfing/main/app/icon/Perplexity.svg"
     <<: *proxy_groups
   - name: Grok
+    icon: "https://raw.githubusercontent.com/AstraSolis/Surfing/main/app/icon/Grok.svg"
     <<: *proxy_groups
   - name: Microsoft Copilot
+    icon: "https://raw.githubusercontent.com/AstraSolis/Surfing/main/app/icon/MicrosoftCopilot.svg"
     <<: *proxy_groups
   - name: GitHub Copilot
+    icon: "https://raw.githubusercontent.com/AstraSolis/Surfing/main/app/icon/GitHubCopilot.svg"
     <<: *proxy_groups
   - name: 其他AI
+    icon: "https://cdn.jsdelivr.net/gh/GitMetaio/Surfing@main/app/icon/Ai.svg"
     <<: *proxy_groups
   - name: GitHub
     icon: "https://cdn.jsdelivr.net/gh/GitMetaio/Surfing@main/app/icon/GitHub.svg"
