@@ -78,7 +78,9 @@ esac
             check=False,
         )
         self.assertEqual(
-            result.returncode, 0, (result.stdout + result.stderr).decode(errors="replace")
+            result.returncode,
+            0,
+            (result.stdout + result.stderr).decode(errors="replace"),
         )
         return result
 
@@ -121,12 +123,9 @@ esac
             path,
             f'scripts_dir="{self.scripts.as_posix()}"\n'
             f'pid_file="{self.root.as_posix()}/core.pid"\n'
-            'log() { :; }\ncheck_permission() { return 0; }\n'
+            "log() { :; }\ncheck_permission() { return 0; }\n"
             'clear_port_blockers() { :; }\nstart_bin() { echo 1 > "$pid_file"; }\n'
-            'display_bin_status() { return 1; }\n'
-            + functions
-            + "\n"
-            + commands,
+            "display_bin_status() { return 1; }\n" + functions + "\n" + commands,
         )
         self.run_script(path)
 
@@ -149,9 +148,9 @@ esac
             path,
             f'scripts_dir="{self.scripts.as_posix()}"\n'
             f'ipv6_disabled_flag="{self.root.as_posix()}/absent"\n'
-            'log() { :; }\npgrep() { return 1; }\nxargs() { :; }\n'
-            'destroy_all_rules() { :; }\nsleep() { :; }\n'
-            'disable_module() {\n' + branch + "\n}\ndisable_module\n",
+            "log() { :; }\npgrep() { return 1; }\nxargs() { :; }\n"
+            "destroy_all_rules() { :; }\nsleep() { :; }\n"
+            "disable_module() {\n" + branch + "\n}\ndisable_module\n",
         )
         self.run_script(path)
         self.assert_firewall(False)

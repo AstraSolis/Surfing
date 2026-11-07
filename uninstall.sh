@@ -1,5 +1,7 @@
 #!/system/bin/sh
 
+[ -f /data/adb/box_bll/scripts/box.preferred ] && /data/adb/box_bll/scripts/box.preferred stop >/dev/null 2>&1
+
 rm -f /data/adb/service.d/Surfing_service.sh 2>/dev/null
 rm -f /data/adb/ksu/service.d/Surfing_service.sh 2>/dev/null
 rm -rf /data/adb/box_bll 2>/dev/null

@@ -132,6 +132,8 @@ The fork also supports a fixed authenticated SOCKS5 exit. Select an airport node
 
 AI services have separate routing groups, including Gemini, AI Studio and NotebookLM ahead of ordinary Google rules. Each service defaults to `总模式` and can independently select `家宽落地` or an airport node using the existing service-group options. Ten reviewed local rule files ship with the module and are deployed on upgrade. Shared Google, GitHub and CDN parent domains are not routed to the residential exit as a whole. See [AI routing, traffic limits and migration](docs/AI-ROUTING.md).
 
+Preferred modes share IP reputation reports across ALL and regional selections, while retaining each group's selected node. Probing is disabled until an IPQS key is configured in the device-only `clash/private/preferred.json`. Daily reviews cover active exits and a few backups, with checks before selecting expired candidates. See [preferred-mode setup and limits](docs/PREFERRED.md).
+
 </details>
 
 #

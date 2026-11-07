@@ -27,6 +27,20 @@ external-controller: 0.0.0.0:9090 #修改端口后，如使用磁贴请重新正
 external-ui-url: "https://github.com/Zephyruso/zashboard/releases/latest/download/dist.zip"
 external-ui: "./webroot/Zash/"
 secret: "" # 面板访问密码，如在公网访问建议设置
+# 优选扫描与信誉查询分别使用本机入口，不切换业务组来探测节点。
+listeners:
+  - name: 优选探测
+    type: mixed
+    listen: 127.0.0.1
+    port: 7894
+    proxy: 优选·探测出口
+    udp: false
+  - name: 优选查询
+    type: mixed
+    listen: 127.0.0.1
+    port: 7895
+    proxy: 优选·检测连接
+    udp: false
 # —————————
 # 健康检查
 p: &p
@@ -203,6 +217,13 @@ proxy_groups: &proxy_groups
     proxies:
       - 总模式
       - 家宽落地
+      - ALL·优选
+      - 狮城地区·优选
+      - 香港地区·优选
+      - 日本地区·优选
+      - 美国地区·优选
+      - 中国台湾·优选
+      - 其它地区·优选
       - ALL·延迟最低
       - ALL·负载均衡
       - ALL·故障转移
@@ -222,6 +243,13 @@ proxy-groups:
     type: select
     proxies:
       - ALL·延迟最低
+      - ALL·优选
+      - 狮城地区·优选
+      - 香港地区·优选
+      - 日本地区·优选
+      - 美国地区·优选
+      - 中国台湾·优选
+      - 其它地区·优选
       - ALL·负载均衡
       - ALL·故障转移
       - ALL·日本地区
@@ -231,6 +259,73 @@ proxy-groups:
       - ALL·狮城地区
       - ALL·其它地区
       - 🌐 本机·本地直连
+  # 可见入口共用一次检测；后台只更新对应的内部出口选择。
+  - name: ALL·优选
+    type: select
+    proxies: [优选·ALL出口]
+  - name: 狮城地区·优选
+    type: select
+    proxies: [优选·SG出口]
+  - name: 香港地区·优选
+    type: select
+    proxies: [优选·HK出口]
+  - name: 日本地区·优选
+    type: select
+    proxies: [优选·JP出口]
+  - name: 美国地区·优选
+    type: select
+    proxies: [优选·US出口]
+  - name: 中国台湾·优选
+    type: select
+    proxies: [优选·TW出口]
+  - name: 其它地区·优选
+    type: select
+    proxies: [优选·OTHER出口]
+  - name: 优选·ALL出口
+    type: select
+    hidden: true
+    proxies: [⛔️ 禁止·拒绝连接]
+    <<: *A
+  - name: 优选·SG出口
+    type: select
+    hidden: true
+    proxies: [⛔️ 禁止·拒绝连接]
+    <<: *A
+  - name: 优选·HK出口
+    type: select
+    hidden: true
+    proxies: [⛔️ 禁止·拒绝连接]
+    <<: *A
+  - name: 优选·JP出口
+    type: select
+    hidden: true
+    proxies: [⛔️ 禁止·拒绝连接]
+    <<: *A
+  - name: 优选·US出口
+    type: select
+    hidden: true
+    proxies: [⛔️ 禁止·拒绝连接]
+    <<: *A
+  - name: 优选·TW出口
+    type: select
+    hidden: true
+    proxies: [⛔️ 禁止·拒绝连接]
+    <<: *A
+  - name: 优选·OTHER出口
+    type: select
+    hidden: true
+    proxies: [⛔️ 禁止·拒绝连接]
+    <<: *A
+  - name: 优选·探测出口
+    type: select
+    hidden: true
+    proxies: [⛔️ 禁止·拒绝连接]
+    <<: *A
+  - name: 优选·检测连接
+    type: select
+    # 信誉 API 使用固定管理连接；直连不可达时可手动选一个具体机场节点。
+    proxies: [🌐 本机·本地直连]
+    <<: *A
   - name: 家宽落地
     type: select
     proxies:

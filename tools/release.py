@@ -37,6 +37,7 @@ ROOT_PAYLOAD = {
     "changelog.md",
     "docs/MIGRATION.md",
     "docs/AI-ROUTING.md",
+    "docs/PREFERRED.md",
 }
 AI_RULE_FILES = {
     f"box_bll/clash/rules/AI-{name}.list"
@@ -66,13 +67,18 @@ REQUIRED = {
     "box_bll/bin/curl",
     "box_bll/bin/clash",
     "box_bll/scripts/box.landing",
+    "box_bll/scripts/box.preferred",
+    "box_bll/scripts/box.preferred.json.awk",
+    "box_bll/scripts/box.preferred.policy.awk",
     "box_bll/scripts/box.config",
     "box_bll/scripts/box.service",
     "box_bll/scripts/box.iptables",
     "box_bll/clash/config.yaml",
     "box_bll/clash/landing.example.yaml",
+    "box_bll/clash/preferred.example.json",
     "box_bll/clash/rules/LinuxDO.mrs",
     "docs/AI-ROUTING.md",
+    "docs/PREFERRED.md",
     "box_bll/clash/webroot/Zash/index.html",
     "SurfingTile.zip",
     "build-info.json",

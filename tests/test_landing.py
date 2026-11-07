@@ -370,7 +370,11 @@ class InstallerTests(unittest.TestCase):
         for relative in (
             "clash/config.yaml",
             "clash/landing.example.yaml",
+            "clash/preferred.example.json",
             "scripts/box.landing",
+            "scripts/box.preferred",
+            "scripts/box.preferred.json.awk",
+            "scripts/box.preferred.policy.awk",
             "scripts/box.config",
             "clash/etc/hosts",
         ):
@@ -453,6 +457,16 @@ class InstallerTests(unittest.TestCase):
     def test_first_install_upgrade_and_keep_config(self):
         self.install()
         self.assertEqual(self.account.read_bytes(), EXAMPLE.read_bytes())
+        preferred = self.box / "clash/private/preferred.json"
+        defaults = json.loads(preferred.read_text(encoding="utf-8"))
+        self.assertFalse(defaults["enabled"])
+        defaults.update(
+            {"enabled": True, "api_key": "fixture-private-key", "daily_budget": 37}
+        )
+        personal_preferred = json.dumps(defaults)
+        write(preferred, personal_preferred)
+        ledger = self.box / "clash/private/preferred/ips"
+        write(ledger, "198.51.100.1\t1\tSG\t10\t0\n")
         self.assertEqual(
             (self.box / "scripts/box.landing").read_bytes(), HELPER.read_bytes()
         )
@@ -465,9 +479,28 @@ class InstallerTests(unittest.TestCase):
         self.install(keep=True)
         self.assertEqual(config.read_text(encoding="utf-8"), original)
         self.assertEqual(self.account.read_text(encoding="utf-8"), personal)
+        self.assertEqual(preferred.read_text(encoding="utf-8"), personal_preferred)
+        self.assertIn("198.51.100.1", ledger.read_text())
         self.install(keep=False)
         self.assertEqual(self.account.read_text(encoding="utf-8"), personal)
+        self.assertEqual(preferred.read_text(encoding="utf-8"), personal_preferred)
+        self.assertIn("198.51.100.1", ledger.read_text())
         self.assertNotIn("# personal-marker", config.read_text(encoding="utf-8"))
+
+    def test_missing_preferred_helper_preserves_existing_config(self):
+        self.install()
+        config = self.box / "clash/config.yaml"
+        original = config.read_bytes()
+        stage = self.stage_module
+
+        def missing_helper():
+            stage()
+            (self.stage / "box_bll/scripts/box.preferred.policy.awk").unlink()
+
+        self.stage_module = missing_helper
+        output = self.install(success=False)
+        self.assertIn("Missing preferred-mode file", output)
+        self.assertEqual(config.read_bytes(), original)
         self.assertIn(
             "家宽账号",
             yaml.safe_load(config.read_text(encoding="utf-8"))["proxy-providers"],
@@ -617,6 +650,8 @@ class RuntimeTests(unittest.TestCase):
         self.cfg["dns"] = {"enable": False}
         self.cfg["sniffer"] = {"enable": False}
         self.cfg["tun"] = {"enable": False}
+        for listener in self.cfg.get("listeners", []):
+            listener["port"] = free_port()
         for group in self.cfg["proxy-groups"]:
             if "url" in group or group["type"] in (
                 "url-test",

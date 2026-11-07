@@ -1,0 +1,20 @@
+{
+  "enabled": false,
+  "api_key": "",
+  "providers": ["1.主要地址", "2.备用地址", "3.额外地址"],
+  "controller": "http://127.0.0.1:9090",
+  "controller_secret": "",
+  "probe_port": 7894,
+  "management_port": 7895,
+  "check_ipv6": true,
+  "review_interval": 86400,
+  "exit_interval": 3600,
+  "selection_max_age": 3600,
+  "daily_budget": 100,
+  "request_gap": 5,
+  "batch_size": 5,
+  "backups": 2,
+  "max_risk": 74,
+  "poll_interval": 60,
+  "allow_country_change": false
+}

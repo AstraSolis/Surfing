@@ -1,7 +1,7 @@
 # JetBrains IDE settings
 .idea/
 
-# Device-only SOCKS5 credentials
+# Device-only credentials, preferred-mode settings and scan history
 /box_bll/clash/private/
 
 # Local build and verification output

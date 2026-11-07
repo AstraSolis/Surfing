@@ -4,6 +4,10 @@
 
 运行 `python tests/test_block.py --shell /path/to/ash`。测试在临时目录运行实际 `box.block` 与服务启停代码，使用模拟包列表和 IPv4/IPv6 防火墙，验证删除最后一项、保留其他名单、核心已退出时清理、核心重启恢复和模块停用清理。不会操作主机防火墙或 Android 设备；设备上的 UID、实际规则和停止后的连通性仍需实测。
 
+## 优选模式
+
+运行 `python tests/test_preferred.py --shell /path/to/ash --busybox /path/to/busybox --mihomo /path/to/mihomo --curl /path/to/curl`。测试使用真实核心、本机模拟代理和信誉接口，覆盖 Unicode/JSON 解析、实际出口查询、共享报告、独立地区选择、稳定保持、配额、限流、过期候选与 IPv6 风险。测试副本将公共地址替换为回环地址，并跳过真实等待；间隔逻辑另用受控时钟验证。省略核心参数只运行解析及部分脚本验证，不表示端到端验证通过。
+
 ## AI 分流
 
 准备 Python 3.10+、PyYAML 和主机平台的 mihomo v1.19.33：

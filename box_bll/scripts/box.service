@@ -181,6 +181,7 @@ start_service() {
 }
 
 stop_service() {
+    [ -f "${scripts_dir}/box.preferred" ] && "${scripts_dir}/box.preferred" stop >/dev/null 2>&1
     [ -f "${scripts_dir}/box.block" ] && "${scripts_dir}/box.block" disable >/dev/null 2>&1
     if display_bin_status; then
         log Warn "正在下发 SIGTERM 终止 ${bin_name} 进程."
@@ -196,6 +197,7 @@ case "$1" in
         bin_pid=$(get_bin_pid)
         if [ -n "${bin_pid}" ]; then
             log Info "${bin_name} 核心已在后台稳健运行 (PID: ${bin_pid})."
+            [ -f "${scripts_dir}/box.preferred" ] && "${scripts_dir}/box.preferred" start >/dev/null 2>&1
             exit 0
         fi
 
@@ -212,6 +214,7 @@ case "$1" in
             uptime_sec=$(cut -d. -f1 /proc/uptime)
             [ "${uptime_sec%.*}" -lt 180 ] && log Info "检测到系统冷启动，正在同步运行环境." && sleep 5
             wait_bin_listen || true
+            [ -f "${scripts_dir}/box.preferred" ] && "${scripts_dir}/box.preferred" start >/dev/null 2>&1
         fi
         ;;
     stop)

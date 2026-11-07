@@ -238,6 +238,9 @@ deploy_ai_rules() {
 
 choose_language
 check_ai_rules
+for preferred_file in scripts/box.preferred scripts/box.preferred.json.awk scripts/box.preferred.policy.awk clash/preferred.example.json; do
+  [ -s "$MODPATH/box_bll/$preferred_file" ] || abort "Error: Missing preferred-mode file: $preferred_file"
+done
 
 # 升级沿用设备核心，首次安装使用包内核心；先检查再替换任何服务文件。
 LANDING_CORE="$BIN_PATH/clash"
@@ -249,6 +252,7 @@ ASH_STANDALONE=1 "$MODPATH/box_bll/bin/busybox" sh "$MODPATH/box_bll/scripts/box
 
 sync_version_from_module_prop
     if [ -d "$BOX_BLL_PATH" ]; then
+      [ -f "$SCRIPTS_PATH/box.preferred" ] && "$SCRIPTS_PATH/box.preferred" stop >/dev/null 2>&1
       print_lang "正在更新模块..." "Updating module..."
       ui_print "↴"
 
@@ -310,6 +314,7 @@ sync_version_from_module_prop
       sleep 1
       cp -f "$MODPATH/box_bll/clash/etc/hosts" "$BOX_BLL_PATH/clash/etc/"
       cp -f "$MODPATH/box_bll/clash/landing.example.yaml" "$BOX_BLL_PATH/clash/"
+      cp -f "$MODPATH/box_bll/clash/preferred.example.json" "$BOX_BLL_PATH/clash/" || abort "Error: Cannot deploy preferred-mode defaults."
       rm -rf "$MODPATH/box_bll"
 
       choose_to_umount_hosts_file
@@ -330,6 +335,8 @@ sync_version_from_module_prop
 
 ASH_STANDALONE=1 "$BIN_PATH/busybox" sh "$SCRIPTS_PATH/box.landing" init "$BOX_BLL_PATH" "$CONFIG_FILE" || \
   abort "Error: Unable to prepare private landing configuration."
+ASH_STANDALONE=1 "$BIN_PATH/busybox" sh "$SCRIPTS_PATH/box.preferred" init "$BOX_BLL_PATH" || \
+  abort "Error: Unable to prepare private preferred-mode settings."
 
 mv -f "$MODPATH/Surfing_service.sh" "$service_dir/"; rm -f "$SURFING_TILE_ZIP"
 

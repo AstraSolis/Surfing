@@ -1,0 +1,499 @@
+#!/system/bin/sh
+# One scheduler for every preferred group. Only this file performs requests.
+export PATH="/data/adb/box_bll/bin:$PATH"
+export LC_ALL=C
+umask 077
+
+SCRIPT=$(realpath "$0")
+SCRIPTS=$(dirname "$SCRIPT")
+ROOT=$(dirname "$SCRIPTS")
+[ "$1" = "init" ] && [ -n "$2" ] && ROOT=$2
+PRIVATE="$ROOT/clash/private"
+SETTINGS="$PRIVATE/preferred.json"
+STATE="$PRIVATE/preferred"
+JSON="$SCRIPTS/box.preferred.json.awk"
+POLICY="$SCRIPTS/box.preferred.policy.awk"
+TAB=$(printf '\t')
+IPV4_URL='https://api.ipify.org?format=json'
+IPV6_URL='https://api6.ipify.org?format=json'
+DELAY_URL='https://www.gstatic.com/generate_204'
+SECONDARY_URL='https://cp.cloudflare.com/generate_204'
+MODULE_DISABLED='/data/adb/modules/Surfing/disable'
+BYPASS_MARKER='/dev/tmp/wifi_bypassed'
+
+paused() {
+    [ -f "$STATE/stop.request" ] || [ -f "$ROOT/manual" ] ||
+        [ -f "$MODULE_DISABLED" ] || [ -f "$BYPASS_MARKER" ]
+}
+
+json() {
+    json_action=$1
+    shift
+    PREFERRED_ACTION=$json_action awk -f "$JSON" "$@"
+}
+policy() { PREFERRED_ACTION=$1 awk -f "$POLICY"; }
+encode() { printf '%s' "$1" | json encode; }
+log() {
+    printf '[%s] %s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "$*" >>"$STATE/events.log"
+    if [ "$(wc -c <"$STATE/events.log")" -gt 65536 ]; then
+        tail -n 200 "$STATE/events.log" >"$STATE/events.trim" && mv -f "$STATE/events.trim" "$STATE/events.log"
+    fi
+}
+init() {
+    [ ! -L "$PRIVATE" ] && [ ! -L "$SETTINGS" ] && [ ! -L "$STATE" ] || return 1
+    mkdir -p "$PRIVATE" "$STATE" || return 1
+    chmod 700 "$PRIVATE" "$STATE" || return 1
+    if [ ! -e "$SETTINGS" ]; then
+        cp "$ROOT/clash/preferred.example.json" "$SETTINGS" || return 1
+    fi
+    [ -f "$SETTINGS" ] || return 1
+    chmod 600 "$SETTINGS" || return 1
+    for ledger in nodes ips health choices quota retry; do
+        [ ! -L "$STATE/$ledger" ] || return 1
+        if [ -e "$STATE/$ledger" ]; then
+            [ -f "$STATE/$ledger" ] || return 1
+        else
+            : >"$STATE/$ledger" || return 1
+        fi
+        chmod 600 "$STATE/$ledger" || return 1
+    done
+}
+settings() {
+    json settings "$SETTINGS" >"$WORK/settings" || return 1
+    {
+        read -r ENABLED
+        read -r CONTROLLER
+        read -r PROBE_PORT
+        read -r MANAGEMENT_PORT
+        read -r IPV6
+        read -r REVIEW_INTERVAL
+        read -r EXIT_INTERVAL
+        read -r SELECTION_MAX_AGE
+        read -r DAILY_BUDGET
+        read -r REQUEST_GAP
+        read -r BATCH_SIZE
+        read -r BACKUPS
+        read -r MAX_RISK
+        read -r POLL_INTERVAL
+        read -r HAS_KEY
+        read -r ALLOW_COUNTRY_CHANGE
+    } <"$WORK/settings"
+    [ "$PROBE_PORT" != "$MANAGEMENT_PORT" ] || return 1
+    printf '%s\n' "$POLL_INTERVAL" >"$STATE/poll-seconds"
+    json controller-auth "$SETTINGS" >"$WORK/controller.curl" || return 1
+    json providers "$SETTINGS" >"$WORK/providers" || return 1
+    : >"$WORK/tls.curl"
+    for ca_dir in /apex/com.android.conscrypt/cacerts /system/etc/security/cacerts; do
+        if [ -d "$ca_dir" ]; then
+            printf 'capath = "%s"\n' "$ca_dir" >"$WORK/tls.curl"
+            break
+        fi
+    done
+    PREFERRED_STATE=$STATE
+    PREFERRED_WORK=$WORK
+    PREFERRED_NOW=$NOW
+    PREFERRED_MAX_RISK=$MAX_RISK
+    PREFERRED_ALLOW_COUNTRY_CHANGE=$ALLOW_COUNTRY_CHANGE
+    PREFERRED_REVIEW_INTERVAL=$REVIEW_INTERVAL
+    PREFERRED_EXIT_INTERVAL=$EXIT_INTERVAL
+    PREFERRED_BACKUPS=$BACKUPS
+    PREFERRED_REJECT=$REJECT
+    export PREFERRED_STATE PREFERRED_WORK PREFERRED_NOW PREFERRED_MAX_RISK
+    export PREFERRED_ALLOW_COUNTRY_CHANGE PREFERRED_REVIEW_INTERVAL PREFERRED_EXIT_INTERVAL
+    export PREFERRED_BACKUPS PREFERRED_REJECT
+}
+upsert() {
+    PREFERRED_RECORD=$2 awk -F '\t' '
+        BEGIN {record=ENVIRON["PREFERRED_RECORD"]; split(record,a,"\t")}
+        $1 != a[1] {print}
+        END {print record}
+    ' "$STATE/$1" >"$WORK/ledger" && mv -f "$WORK/ledger" "$STATE/$1"
+}
+row() { awk -F '\t' -v key="$2" '$1 == key {print; exit}' "$STATE/$1"; }
+api() {
+    # The controller credential is never passed to an external URL or process argv.
+    curl -q -sS --connect-timeout 3 --max-time 8 --max-filesize 4194304 \
+        --noproxy '*' --config "$WORK/controller.curl" "$@" 2>"$WORK/curl.error"
+}
+get_api() { api --fail "$CONTROLLER/$1" -o "$2"; }
+select_node() {
+    paused && return 1
+    PREFERRED_VALUE=$2 json select /dev/null >"$WORK/selection.json" || return 1
+    api --fail -X PUT -H 'Content-Type: application/json' \
+        --data-binary "@$WORK/selection.json" "$CONTROLLER/proxies/$1" -o /dev/null
+}
+pace() {
+    paused && return 1
+    now_request=$(date +%s)
+    last_request=$(cat "$STATE/last-request" 2>/dev/null)
+    case "$last_request" in '' | *[!0-9]*) last_request=0 ;; esac
+    elapsed=$((now_request - last_request))
+    [ "$elapsed" -lt 0 ] && elapsed=0
+    [ "$elapsed" -lt "$REQUEST_GAP" ] && sleep $((REQUEST_GAP - elapsed))
+    date +%s >"$STATE/last-request"
+}
+delay_test() {
+    select_node "$PROBE_GROUP" "$1" || return 1
+    pace || return 1
+    get_api "proxies/$PROBE_GROUP/delay?timeout=5000&url=$(encode "$2")" "$WORK/delay.json" || return 1
+    json delay "$WORK/delay.json"
+}
+lookup() {
+    ip_address=$1
+    max_age=$2
+    cached=$(row ips "$ip_address")
+    if [ -n "$cached" ]; then
+        IFS="$TAB" read -r _cache_ip cache_at _cache_cc _cache_risk _cache_bad <<EOF
+$cached
+EOF
+        [ "$cache_at" -le "$NOW" ] && [ $((NOW - cache_at)) -lt "$max_age" ] && return 0
+    fi
+    read -r retry_until retry_count <"$STATE/retry"
+    case "$retry_until" in '' | *[!0-9]*) retry_until=0 ;; esac
+    [ "$NOW" -lt "$retry_until" ] && {
+        LOOKUP_PAUSED=true
+        return 1
+    }
+    today=$(date -u +%Y-%m-%d)
+    read -r quota_day quota_count <"$STATE/quota"
+    [ "$quota_day" = "$today" ] || quota_count=0
+    case "$quota_count" in '' | *[!0-9]*) quota_count=0 ;; esac
+    limit=$DAILY_BUDGET
+    # Discovery cannot spend the final 10% reserved for active exits/failover.
+    [ "${URGENT:-false}" = true ] || limit=$((DAILY_BUDGET - DAILY_BUDGET / 10))
+    [ "$quota_count" -ge "$limit" ] && {
+        LOOKUP_PAUSED=true
+        return 1
+    }
+    PREFERRED_IP=$ip_address json ipqs-request "$SETTINGS" >"$WORK/ipqs.curl" || return 1
+    pace || return 1
+    # Count failed requests too. Restarting the core never resets the daily budget.
+    printf '%s %s\n' "$today" $((quota_count + 1)) >"$WORK/quota"
+    mv -f "$WORK/quota" "$STATE/quota" || return 1
+    code=$(curl -q -sS --connect-timeout 5 --max-time 10 --max-filesize 131072 \
+        --proto '=https' --max-redirs 0 --config "$WORK/tls.curl" --config "$WORK/ipqs.curl" \
+        --noproxy '' --proxy "socks5h://127.0.0.1:$MANAGEMENT_PORT" \
+        -D "$WORK/headers" -o "$WORK/reputation.json" -w '%{http_code}' 2>"$WORK/curl.error")
+    request_result=$?
+    rm -f "$WORK/ipqs.curl"
+    if [ "$request_result" -eq 0 ] && [ "$code" = 200 ] &&
+        json score "$WORK/reputation.json" >"$WORK/score" 2>/dev/null; then
+        score=$(cat "$WORK/score")
+        upsert ips "$ip_address$TAB$NOW$TAB$score" || return 1
+        printf '0 0\n' >"$STATE/retry"
+        return 0
+    fi
+    case "$retry_count" in '' | *[!0-9]*) retry_count=0 ;; esac
+    retry_count=$((retry_count + 1))
+    case "$retry_count" in 1) retry_wait=900 ;; 2) retry_wait=3600 ;; *) retry_wait=21600 ;; esac
+    server_wait=$(awk 'tolower($1)=="retry-after:" {gsub("\r", "", $2); if ($2 ~ /^[0-9]+$/) print $2; exit}' "$WORK/headers" 2>/dev/null)
+    case "$server_wait" in '' | *[!0-9]*) server_wait=0 ;; esac
+    [ "$server_wait" -gt "$retry_wait" ] && retry_wait=$server_wait
+    printf '%s %s\n' "$((NOW + retry_wait))" "$retry_count" >"$STATE/retry"
+    LOOKUP_PAUSED=true
+    log "Reputation lookup unavailable (HTTP $code); retry in $retry_wait seconds. Previous reports retained."
+    return 1
+}
+exit_ip() {
+    pace || return 1
+    curl -q -fsS --connect-timeout 5 --max-time 8 --max-filesize 65536 \
+        --proto '=https' --max-redirs 0 --config "$WORK/tls.curl" --http1.1 -H 'Connection: close' \
+        --noproxy '' --proxy "socks5h://127.0.0.1:$PROBE_PORT" "$2" \
+        -o "$WORK/echo.json" 2>"$WORK/curl.error" || return 1
+    PREFERRED_FAMILY=$1 json ip "$WORK/echo.json" 2>/dev/null
+}
+scan_node() {
+    node_scan_ok=false
+    target=$1
+    freshness=${2:-$REVIEW_INTERVAL}
+    old=$(row nodes "$target")
+    n_at=0
+    n4=-
+    n6=-
+    changes=0
+    stable_at=$NOW
+    n_delay=0
+    [ -z "$old" ] || IFS="$TAB" read -r _n_name n_at n4 n6 changes stable_at _attempted n_delay <<EOF
+$old
+EOF
+    if ! select_node "$PROBE_GROUP" "$target"; then return 1; fi
+    if v4=$(exit_ip 4 "$IPV4_URL"); then
+        node_scan_ok=true
+        v6=-
+        if [ "$IPV6" = true ]; then
+            v6=$(exit_ip 6 "$IPV6_URL") || v6=-
+            # An echo outage must not erase a previously known IPv6 risk.
+            [ "$v6" = - ] && [ "$n4" = "$v4" ] && v6=$n6
+        fi
+        if [ "$n_at" -gt 0 ] && { [ "$n4" != "$v4" ] || { [ "$n6" != - ] && [ "$v6" != "$n6" ]; }; }; then
+            changes=$((changes + 1))
+            stable_at=$NOW
+            log "Observed exit change for $target; its previous IP report is not reused."
+        fi
+        lookup "$v4" "$freshness" || true
+        [ "$v6" = - ] || lookup "$v6" "$freshness" || true
+        n_at=$NOW
+        n4=$v4
+        n6=$v6
+        upsert health "$target${TAB}0$TAB$NOW" || return 1
+        n_delay=$(awk -F '\t' -v key="$target" '$1==key {print $3; exit}' "$WORK/inventory")
+        case "$n_delay" in '' | *[!0-9]*) n_delay=0 ;; esac
+        upsert nodes "$target$TAB$n_at$TAB$n4$TAB$n6$TAB$changes$TAB$stable_at$TAB$NOW$TAB$n_delay" || return 1
+        # Quality is evaluated before requesting any additional delay measurement.
+        verdict=$(PREFERRED_SCOPE=ALL PREFERRED_VALUE=$target PREFERRED_ALLOW_COUNTRY_CHANGE=true policy verdict)
+        if [ -n "$verdict" ] && [ "$n_delay" -le 0 ]; then
+            n_delay=$(delay_test "$target" "$DELAY_URL") || n_delay=0
+            [ "$n_delay" -gt 0 ] || log "Delay check unavailable for $target; not admitting a new candidate without a measurement."
+        fi
+    fi
+    upsert nodes "$target$TAB$n_at$TAB$n4$TAB$n6$TAB$changes$TAB$stable_at$TAB$NOW$TAB$n_delay" || return 1
+    [ "$node_scan_ok" = true ]
+}
+network_available() {
+    pace || return 1
+    curl -q -fsS --connect-timeout 5 --max-time 8 --max-filesize 65536 \
+        --proto '=https' --max-redirs 0 --config "$WORK/tls.curl" --noproxy '' \
+        --proxy "socks5h://127.0.0.1:$MANAGEMENT_PORT" "$DELAY_URL" \
+        -o /dev/null 2>"$WORK/curl.error"
+}
+check_health() {
+    policy health >"$WORK/health-jobs"
+    while IFS="$TAB" read -r target failures tested_at; do
+        if [ "$failures" -gt 0 ]; then
+            if delay_test "$target" "$SECONDARY_URL" >/dev/null; then
+                failures=0
+            elif ! network_available; then
+                log 'Network availability is uncertain; retaining current selections.'
+                continue
+            fi
+        fi
+        upsert health "$target$TAB$failures$TAB$tested_at"
+    done <"$WORK/health-jobs"
+}
+ranks() {
+    for scope in ALL SG HK JP US TW OTHER; do
+        PREFERRED_SCOPE=$scope policy rank | sort -t "$TAB" -k2,2n -k3,3n -k4,4n -k1,1 >"$WORK/$scope.rank"
+    done
+}
+choose_groups() {
+    while IFS="$TAB" read -r scope group current active; do
+        if [ "$active" != 1 ]; then
+            [ "$current" = "$REJECT" ] || select_node "$group" "$REJECT" || true
+            continue
+        fi
+        verdict=$(PREFERRED_SCOPE=$scope PREFERRED_VALUE=$current policy verdict)
+        if [ -n "$verdict" ]; then
+            # Stick to a usable, qualified current node, even if another is faster.
+            cc=${verdict%%"$TAB"*}
+            saved=$(row choices "$scope")
+            case "$saved" in "$scope$TAB$current$TAB"*) ;; *) upsert choices "$scope$TAB$current$TAB$cc$TAB$NOW" ;; esac
+            continue
+        fi
+        # A known-bad/unknown exit is not allowed to silently fall back to ordinary proxies.
+        [ "$current" = "$REJECT" ] || select_node "$group" "$REJECT" || continue
+        candidate=$(awk -F '\t' 'NR==1 {print $1}' "$WORK/$scope.rank")
+        saved=$(row choices "$scope")
+        if [ -n "$saved" ]; then
+            IFS="$TAB" read -r _saved_scope saved_node _saved_cc _saved_at <<EOF
+$saved
+EOF
+            if awk -F '\t' -v key="$saved_node" '$1==key {found=1; exit} END {exit !found}' "$WORK/$scope.rank"; then
+                candidate=$saved_node
+            fi
+        fi
+        [ -n "$candidate" ] || continue
+        verdict=$(PREFERRED_SCOPE=$scope PREFERRED_VALUE=$candidate policy verdict)
+        IFS="$TAB" read -r cc risk rep_at exit_at <<EOF
+$verdict
+EOF
+        candidate_alive=$(awk -F '\t' -v key="$candidate" '$1==key {print $2; exit}' "$WORK/inventory")
+        if [ "$candidate_alive" != 1 ] || [ $((NOW - rep_at)) -ge "$SELECTION_MAX_AGE" ] || [ $((NOW - exit_at)) -ge "$EXIT_INTERVAL" ]; then
+            if [ "$candidate_alive" != 1 ] || [ $((NOW - exit_at)) -ge "$EXIT_INTERVAL" ]; then
+                [ "$processed" -lt "$BATCH_SIZE" ] || continue
+                processed=$((processed + 1))
+                URGENT=true scan_node "$candidate" "$SELECTION_MAX_AGE" || continue
+            else
+                record=$(row nodes "$candidate")
+                IFS="$TAB" read -r _name _at candidate4 candidate6 _changes _stable _attempt _delay <<EOF
+$record
+EOF
+                URGENT=true lookup "$candidate4" "$SELECTION_MAX_AGE" || continue
+                [ "$candidate6" = - ] || URGENT=true lookup "$candidate6" "$SELECTION_MAX_AGE" || continue
+            fi
+            verdict=$(PREFERRED_SCOPE=$scope PREFERRED_VALUE=$candidate policy verdict)
+            [ -n "$verdict" ] || continue
+            IFS="$TAB" read -r cc risk rep_at exit_at <<EOF
+$verdict
+EOF
+            [ $((NOW - rep_at)) -lt "$SELECTION_MAX_AGE" ] && [ $((NOW - exit_at)) -lt "$EXIT_INTERVAL" ] || continue
+        fi
+        [ -n "$(PREFERRED_VALUE=$candidate policy latency)" ] || continue
+        if select_node "$group" "$candidate"; then
+            upsert choices "$scope$TAB$candidate$TAB$cc$TAB$NOW"
+            log "$scope selected $candidate (country $cc, risk $risk)."
+        fi
+    done <"$WORK/groups"
+}
+acquire_lock() {
+    lock_dir=$1
+    [ ! -L "$lock_dir" ] || return 1
+    if ! mkdir "$lock_dir" 2>/dev/null; then
+        lock_owner=$(cat "$lock_dir/pid" 2>/dev/null)
+        case "$lock_owner" in
+            '' | *[!0-9]*)
+                lock_age=$(stat -c %Y "$lock_dir" 2>/dev/null) || return 1
+                [ $(($(date +%s) - lock_age)) -gt 30 ] || return 1
+                ;;
+            *) kill -0 "$lock_owner" 2>/dev/null && return 1 ;;
+        esac
+        rm -f "$lock_dir/pid"
+        rmdir "$lock_dir" 2>/dev/null && mkdir "$lock_dir" 2>/dev/null || return 1
+    fi
+    # /proc/self belongs to the shell opening it; $$ alone is inherited by subshells.
+    lock_owner=$$
+    read -r lock_owner _stat 2>/dev/null </proc/self/stat || lock_owner=$$
+    printf '%s\n' "$lock_owner" >"$lock_dir/pid"
+}
+tick() (
+    # mkdir is an atomic lock on Android; separate status reads never take this lock.
+    acquire_lock "$STATE/work.lock" || return 0
+    WORK=$(mktemp -d "$STATE/work.XXXXXX") || {
+        rm -f "$STATE/work.lock/pid"
+        rmdir "$STATE/work.lock"
+        return 1
+    }
+    trap 'case "$WORK" in "$STATE"/work.*) rm -rf "$WORK" ;; esac; rm -f "$STATE/work.lock/pid"; rmdir "$STATE/work.lock" 2>/dev/null' EXIT
+    trap 'exit 0' HUP INT TERM
+    NOW=$(date +%s)
+    LOOKUP_PAUSED=false
+    REJECT=$(encode '⛔️ 禁止·拒绝连接')
+    PROBE_GROUP=$(encode '优选·探测出口')
+    settings || return 1
+    if paused; then
+        printf 'Paused by module/manual/network-bypass state.\n' >"$STATE/summary"
+        return 0
+    fi
+    if [ "$ENABLED" != true ] || [ "$HAS_KEY" != true ]; then
+        # Old configurations may have no preferred listeners/groups at all.
+        # A disabled worker must still exit, including when controller credentials differ.
+        printf 'false\n' >"$STATE/enabled"
+        printf 'Disabled or missing API key. Configure clash/private/preferred.json.\n' >"$STATE/summary"
+        if get_api proxies "$WORK/proxies.json" && json groups "$WORK/proxies.json" >"$WORK/groups"; then
+            while IFS="$TAB" read -r scope group current active; do
+                [ "$current" = "$REJECT" ] || select_node "$group" "$REJECT" || true
+            done <"$WORK/groups"
+        fi
+        return 0
+    fi
+    if ! get_api proxies "$WORK/proxies.json" || ! get_api configs "$WORK/configs.json"; then
+        log 'Controller unavailable; no group selection changed.'
+        return 1
+    fi
+    PREFERRED_MODE=$(json mode "$WORK/configs.json") || return 1
+    export PREFERRED_MODE
+    set -- "$WORK/proxies.json"
+    provider_index=0
+    while IFS= read -r provider_name; do
+        provider_index=$((provider_index + 1))
+        if get_api "providers/proxies/$provider_name" "$WORK/provider.$provider_index.json"; then
+            set -- "$@" "$WORK/provider.$provider_index.json"
+        else
+            log "Provider unavailable: $provider_name; retaining current selections."
+            return 1
+        fi
+    done <"$WORK/providers"
+    json snapshot "$@" >"$WORK/inventory" || return 1
+    printf 'true\n' >"$STATE/enabled"
+    # Provider health is one signal; confirm failures using a second endpoint.
+    check_health
+    ranks
+    PREFERRED_SCAN_REQUEST=$(cat "$STATE/scan.request" 2>/dev/null)
+    case "$PREFERRED_SCAN_REQUEST" in '' | *[!0-9]*) PREFERRED_SCAN_REQUEST=0 ;; esac
+    export PREFERRED_SCAN_REQUEST
+    policy jobs | sort -t "$TAB" -k1,1n -k2,2n -k3,3 >"$WORK/jobs"
+    processed=0
+    read -r retry_until _retry_count <"$STATE/retry"
+    case "$retry_until" in '' | *[!0-9]*) retry_until=0 ;; esac
+    while IFS="$TAB" read -r priority _attempted target; do
+        [ ! -f "$STATE/stop.request" ] || break
+        [ "$NOW" -lt "$retry_until" ] && [ "$priority" -gt 0 ] && continue
+        [ "$processed" -lt "$BATCH_SIZE" ] || break
+        [ "$LOOKUP_PAUSED" != true ] || break
+        URGENT=false
+        [ "$priority" -eq 0 ] && URGENT=true
+        scan_node "$target" || true
+        processed=$((processed + 1))
+    done <"$WORK/jobs"
+    ranks
+    choose_groups
+    select_node "$PROBE_GROUP" "$REJECT" || true
+    policy status >"$WORK/report"
+    mv -f "$WORK/report" "$STATE/report.tsv"
+    printf 'Last pass: %s UTC\nNodes this pass: %s\nReputation budget: %s/day\nReports are snapshots, not live trust guarantees.\n' \
+        "$(date -u '+%Y-%m-%d %H:%M:%S')" "$processed" "$DAILY_BUDGET" >"$STATE/summary"
+    if [ ! -s "$WORK/jobs" ] && [ "$PREFERRED_SCAN_REQUEST" -gt 0 ]; then rm -f "$STATE/scan.request"; fi
+    # Keep logs bounded without touching unrelated core logs.
+    tail -n 300 "$STATE/events.log" 2>/dev/null >"$WORK/events"
+    mv -f "$WORK/events" "$STATE/events.log"
+)
+running() {
+    read -r daemon_pid 2>/dev/null <"$STATE/daemon.pid" || return 1
+    managed_pid "$daemon_pid"
+}
+managed_pid() {
+    daemon_pid=$1
+    case "$daemon_pid" in '' | *[!0-9]*) return 1 ;; esac
+    kill -0 "$daemon_pid" 2>/dev/null || return 1
+    tr '\0' ' ' 2>/dev/null <"/proc/$daemon_pid/cmdline" | grep -Fq "$SCRIPT"
+}
+start() {
+    running && return 0
+    rm -f "$STATE/stop.request" "$STATE/enabled"
+    nohup "$SCRIPT" daemon >/dev/null 2>&1 &
+}
+
+init || {
+    echo '[preferred] cannot initialize private settings' >&2
+    exit 1
+}
+case "$1" in
+    init) ;;
+    start) start ;;
+    stop)
+        touch "$STATE/stop.request"
+        if running; then kill "$daemon_pid" 2>/dev/null; fi
+        worker_pid=$(cat "$STATE/work.lock/pid" 2>/dev/null)
+        if managed_pid "$worker_pid"; then kill "$worker_pid" 2>/dev/null; fi
+        ;;
+    daemon)
+        acquire_lock "$STATE/daemon.lock" || exit 0
+        echo $$ >"$STATE/daemon.pid"
+        trap 'rm -f "$STATE/daemon.pid" "$STATE/daemon.lock/pid"; rmdir "$STATE/daemon.lock" 2>/dev/null' EXIT
+        trap 'exit 0' HUP INT TERM
+        while :; do
+            [ ! -f "$STATE/stop.request" ] || break
+            [ -d "$ROOT" ] && [ -f "$SCRIPT" ] || break
+            tick || true
+            [ "$(cat "$STATE/enabled" 2>/dev/null)" != false ] || break
+            poll_seconds=$(cat "$STATE/poll-seconds" 2>/dev/null)
+            case "$poll_seconds" in '' | *[!0-9]*) poll_seconds=60 ;; esac
+            sleep "$poll_seconds"
+        done
+        ;;
+    once) tick ;;
+    scan)
+        date +%s >"$STATE/scan.request"
+        start
+        ;;
+    status)
+        cat "$STATE/summary" 2>/dev/null
+        printf '\nSelections (URI-encoded node names):\n'
+        cat "$STATE/choices"
+        printf '\nReputation calls today:\n'
+        cat "$STATE/quota"
+        ;;
+    *)
+        echo 'Usage: box.preferred {init [root]|start|stop|once|scan|status}' >&2
+        exit 1
+        ;;
+esac
