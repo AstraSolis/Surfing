@@ -375,6 +375,8 @@ class InstallerTests(unittest.TestCase):
             "scripts/box.preferred",
             "scripts/box.preferred.json.awk",
             "scripts/box.preferred.policy.awk",
+            "scripts/box.preferred.migrate",
+            "scripts/box.preferred.migrate.awk",
             "scripts/box.config",
             "clash/etc/hosts",
         ):
@@ -491,6 +493,60 @@ class InstallerTests(unittest.TestCase):
         self.assertEqual(preferred.read_text(encoding="utf-8"), personal_preferred)
         self.assertIn("198.51.100.1", ledger.read_text())
         self.assertNotIn("# personal-marker", config.read_text(encoding="utf-8"))
+
+    def test_upgrade_migrates_legacy_preferred_groups_without_replacing_personal_config(
+        self,
+    ):
+        self.install()
+        config = self.box / "clash/config.yaml"
+        source = (
+            yaml.safe_dump(
+                {
+                    "mode": "rule",
+                    "rules": ["MATCH,DIRECT"],
+                    "proxy-providers": {
+                        "custom subscription": {
+                            "type": "inline",
+                            "payload": [{"name": "fixture-node", "type": "reject"}],
+                        }
+                    },
+                    "proxy-groups": [
+                        {
+                            "name": "优选·探测出口",
+                            "type": "select",
+                            "proxies": ["REJECT"],
+                            "use": ["outdated name"],
+                        },
+                        {
+                            "name": "personal group",
+                            "type": "select",
+                            "proxies": ["DIRECT"],
+                        },
+                    ],
+                },
+                allow_unicode=True,
+                sort_keys=False,
+            )
+            + "# preserve personal comment\n"
+        )
+        write(config, source)
+        preferred = self.box / "clash/private/preferred.json"
+        personal = '{"enabled":true,"api_key":"fixture-only","providers":["outdated name"],"daily_budget":37}\n'
+        write(preferred, personal)
+        self.install(keep=True)
+        expected = yaml.safe_load(source)
+        expected["proxy-groups"][0]["include-all-providers"] = True
+        self.assertEqual(yaml.safe_load(config.read_bytes()), expected)
+        self.assertIn("# preserve personal comment", config.read_text(encoding="utf-8"))
+        self.assertEqual(
+            config.with_suffix(".yaml.preferred.bak").read_text(encoding="utf-8"),
+            source,
+        )
+        self.assertEqual(preferred.read_text(), personal)
+        migrated = config.read_bytes()
+        self.install(keep=True)
+        self.assertEqual(config.read_bytes(), migrated)
+        self.assertEqual(preferred.read_text(), personal)
 
     def test_missing_preferred_helper_preserves_existing_config(self):
         self.install()

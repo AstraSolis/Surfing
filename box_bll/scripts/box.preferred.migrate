@@ -1,0 +1,42 @@
+#!/system/bin/sh
+# Upgrade only module-owned preferred groups. Never rewrite the user's YAML wholesale.
+export LC_ALL=C
+umask 077
+
+[ "$#" -eq 3 ] || {
+    echo 'usage: box.preferred.migrate <box_root> <config_path> <mihomo_path>' >&2
+    exit 1
+}
+root=$1
+config=$2
+core=$3
+scripts=$(dirname "$(realpath "$0")")
+[ -f "$config" ] && [ ! -L "$config" ] || {
+    echo '[preferred migration] config must be a regular file' >&2
+    exit 1
+}
+staged=$(mktemp "$config.preferred.XXXXXX") || exit 1
+check_log=$(mktemp "$config.preferred-check.XXXXXX") || {
+    rm -f "$staged"
+    exit 1
+}
+trap 'rm -f "$staged" "$check_log"' EXIT
+cp -p "$config" "$staged" || exit 1
+awk -f "$scripts/box.preferred.migrate.awk" "$config" >"$staged" || exit 1
+cmp -s "$config" "$staged" && exit 0
+
+# Validate in the real data directory so relative provider paths keep their meaning.
+# A validation failure never replaces the currently selected config.
+if [ ! -x "$core" ] || ! "$core" -t -d "$root/clash" -f "$staged" >"$check_log" 2>&1; then
+    echo '[preferred migration] mihomo rejected migrated YAML; original config retained' >&2
+    exit 1
+fi
+backup="$config.preferred.bak"
+[ ! -L "$backup" ] || exit 1
+if [ -e "$backup" ]; then
+    [ -f "$backup" ] || exit 1
+else
+    cp -p "$config" "$backup" || exit 1
+fi
+mv -f "$staged" "$config" || exit 1
+echo '[preferred migration] preferred groups now collect subscriptions automatically'

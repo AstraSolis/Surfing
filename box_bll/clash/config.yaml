@@ -212,6 +212,9 @@ sub-rules:
   家宽专用:
     - NETWORK,udp,REJECT
     - MATCH,家宽·出口
+# 优选只继承节点过滤规则；订阅来源由核心自动收集，不依赖订阅名称。
+preferred_nodes: &preferred_nodes
+    filter: "^(?!.*(套餐|重置|剩余|到期|订阅|群|账户|流量|有效期|时间|官网|失联|余额)).*$"
 proxy_groups: &proxy_groups
     type: select
     proxies:
@@ -292,47 +295,56 @@ proxy-groups:
     type: select
     hidden: true
     proxies: [⛔️ 禁止·拒绝连接]
-    <<: *A
+    include-all-providers: true
+    <<: *preferred_nodes
   - name: 优选·SG出口
     type: select
     hidden: true
     proxies: [⛔️ 禁止·拒绝连接]
-    <<: *A
+    include-all-providers: true
+    <<: *preferred_nodes
   - name: 优选·HK出口
     type: select
     hidden: true
     proxies: [⛔️ 禁止·拒绝连接]
-    <<: *A
+    include-all-providers: true
+    <<: *preferred_nodes
   - name: 优选·JP出口
     type: select
     hidden: true
     proxies: [⛔️ 禁止·拒绝连接]
-    <<: *A
+    include-all-providers: true
+    <<: *preferred_nodes
   - name: 优选·US出口
     type: select
     hidden: true
     proxies: [⛔️ 禁止·拒绝连接]
-    <<: *A
+    include-all-providers: true
+    <<: *preferred_nodes
   - name: 优选·TW出口
     type: select
     hidden: true
     proxies: [⛔️ 禁止·拒绝连接]
-    <<: *A
+    include-all-providers: true
+    <<: *preferred_nodes
   - name: 优选·OTHER出口
     type: select
     hidden: true
     proxies: [⛔️ 禁止·拒绝连接]
-    <<: *A
+    include-all-providers: true
+    <<: *preferred_nodes
   - name: 优选·探测出口
     type: select
     hidden: true
     proxies: [⛔️ 禁止·拒绝连接]
-    <<: *A
+    include-all-providers: true
+    <<: *preferred_nodes
   - name: 优选·检测连接
     type: select
     # 信誉 API 使用固定管理连接；直连不可达时可手动选一个具体机场节点。
     proxies: [🌐 本机·本地直连]
-    <<: *A
+    include-all-providers: true
+    <<: *preferred_nodes
   - name: 家宽落地
     type: select
     proxies:

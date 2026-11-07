@@ -70,6 +70,8 @@ REQUIRED = {
     "box_bll/scripts/box.preferred",
     "box_bll/scripts/box.preferred.json.awk",
     "box_bll/scripts/box.preferred.policy.awk",
+    "box_bll/scripts/box.preferred.migrate",
+    "box_bll/scripts/box.preferred.migrate.awk",
     "box_bll/scripts/box.config",
     "box_bll/scripts/box.service",
     "box_bll/scripts/box.iptables",

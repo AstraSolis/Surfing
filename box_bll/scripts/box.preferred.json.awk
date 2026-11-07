@@ -44,10 +44,17 @@ function utf8(n) {
     if (n < 65536) return sprintf("%c%c%c", 224 + int(n / 4096), 128 + int(n / 64) % 64, 128 + n % 64)
     return sprintf("%c%c%c%c", 240 + int(n / 262144), 128 + int(n / 4096) % 64, 128 + int(n / 64) % 64, 128 + n % 64)
 }
-function string(    s,c,e,n,low) {
+function string(    s,c,e,n,low,chunk) {
     if (slice(pos++, 1) != "\"") fail("expected JSON string")
     s = ""
     while (pos <= input_size) {
+        # Most API strings contain no escapes. Copy short runs in native awk
+        # instead of dispatching one slice()/regexp call for every UTF-8 byte.
+        chunk = slice(pos, 64)
+        if (match(chunk, /^[^"\\[:cntrl:]]+/)) {
+            s = s substr(chunk, 1, RLENGTH); pos += RLENGTH
+            continue
+        }
         c = slice(pos++, 1)
         if (c == "\"") return s
         if (c == "\\") {
@@ -81,42 +88,78 @@ function get(parent, key,    i,id) {
     }
     return 0
 }
-function parse(depth,    id,c,k,x,start) {
+function parse(depth, discard, context,    id,c,k,x,start,next_context,proxy_start,proxy_index,after,vehicle) {
     if (depth > 64 || serial > 200000) fail("JSON limit exceeded")
-    ws(); id = ++serial; c = slice(pos, 1)
+    ws(); id = discard ? 0 : ++serial; c = slice(pos, 1)
     if (c == "{" || c == "[") {
-        kind[id] = c == "{" ? "object" : "array"
+        if (!discard) kind[id] = c == "{" ? "object" : "array"
         pos++; ws()
         if (slice(pos, 1) == (c == "{" ? "}" : "]")) { pos++; return id }
         while (1) {
             ws()
             if (c == "{") {
                 k = string(); ws()
-                if (get(id, k)) fail("duplicate JSON member")
+                if (!discard && get(id, k)) fail("duplicate JSON member")
                 if (slice(pos++, 1) != ":") fail("expected colon")
             }
-            x = parse(depth + 1)
-            child[id, ++count[id]] = x
-            if (c == "{") member[x] = k
+            next_context = 0
+            if (!discard && (action == "snapshot" || action == "inventory")) {
+                if (depth == 0 && k == "providers") next_context = 1
+                else if (context == 1) next_context = 2
+            }
+            if (context == 2 && k == "proxies") {
+                # /providers/proxies also contains generated Compatible providers.
+                # Validate their arrays without allocating a repeated graph of nodes.
+                # Materialize genuine provider nodes only after reading vehicleType;
+                # JSON member order must not change the result.
+                ws()
+                if (slice(pos, 1) != "[") fail("invalid provider proxy list")
+                proxy_start = pos
+                parse(depth + 1, 1)
+                x = ++serial; kind[x] = "array"
+                proxy_index = count[id] + 1
+            } else x = parse(depth + 1, discard, next_context)
+            if (!discard) {
+                child[id, ++count[id]] = x
+                if (c == "{") member[x] = k
+            }
             ws(); x = slice(pos++, 1)
-            if (x == (c == "{" ? "}" : "]")) return id
+            if (x == (c == "{" ? "}" : "]")) break
             if (x != ",") fail("expected comma")
         }
-    } else if (c == "\"") { kind[id] = "string"; value[id] = string() }
+        if (context == 2 && proxy_start) {
+            vehicle = field(id, "vehicleType")
+            if (vehicle == "HTTP" || vehicle == "File" || vehicle == "Inline") {
+                after = pos; pos = proxy_start
+                x = parse(depth + 1); member[x] = "proxies"
+                child[id, proxy_index] = x
+                pos = after
+            }
+        }
+    } else if (c == "\"") {
+        start = string()
+        if (!discard) { kind[id] = "string"; value[id] = start }
+    }
     else if (slice(pos, 4) == "true" || slice(pos, 5) == "false") {
-        kind[id] = "boolean"; value[id] = slice(pos, 1) == "t" ? "true" : "false"
-        pos += length(value[id])
-    } else if (slice(pos, 4) == "null") { kind[id] = "null"; pos += 4 }
+        start = slice(pos, 1) == "t" ? "true" : "false"
+        if (!discard) { kind[id] = "boolean"; value[id] = start }
+        pos += length(start)
+    } else if (slice(pos, 4) == "null") {
+        if (!discard) kind[id] = "null"
+        pos += 4
+    }
     else {
         start = slice(pos, 128)
         if (!match(start, /^-?(0|[1-9][0-9]*)(\.[0-9]+)?([eE][+-]?[0-9]+)?/)) fail("invalid JSON value")
-        kind[id] = "number"; value[id] = substr(start, 1, RLENGTH); pos += RLENGTH
+        if (!discard) { kind[id] = "number"; value[id] = substr(start, 1, RLENGTH) }
+        pos += RLENGTH
     }
     return id
 }
 function document() {
     input_size = length(input); input_block = -1
-    if (input_size > 4194304) fail("JSON document exceeds size limit")
+    limit = ((action == "snapshot" || action == "inventory") && document_count == 1) ? 33554432 : 4194304
+    if (input_size > limit) fail("JSON document exceeds size limit")
     pos = 1; root = parse(0); ws()
     if (pos <= input_size || kind[root] != "object") fail("expected one JSON object")
     documents[++document_count] = root
@@ -263,8 +306,18 @@ function mark(name, depth,    obj,t,all,i) {
     }
     delete visiting[name]
 }
-function groups(    i,name,obj) {
-    if (action == "snapshot") printf "%s", "" > (ENVIRON["PREFERRED_WORK"] "/groups")
+function exclude_landing(name, depth,    obj,all,i) {
+    if (depth > 32 || landing_seen[name]++) return
+    obj = get(proxies, name); all = get(obj, "all")
+    if (kind[all] == "array") {
+        for (i = 1; i <= count[all]; i++) exclude_landing(value[child[all,i]], depth + 1)
+    } else landing_nodes[name] = 1
+}
+function groups(    i,name,obj,all,j) {
+    if (action == "snapshot") {
+        printf "%s", "" > (ENVIRON["PREFERRED_WORK"] "/groups")
+        printf "%s", "" > (ENVIRON["PREFERRED_WORK"] "/members")
+    }
     codes[1] = "ALL"; labels[1] = "ALL·优选"
     codes[2] = "SG"; labels[2] = "狮城地区·优选"
     codes[3] = "HK"; labels[3] = "香港地区·优选"
@@ -286,8 +339,14 @@ function groups(    i,name,obj) {
     for (i = 1; i <= 7; i++) {
         name = "优选·" codes[i] "出口"; obj = get(proxies, name)
         if (kind[get(proxies, labels[i])] == "object" && field(obj, "type") == "Selector") {
+            all = get(obj, "all")
+            if (kind[all] != "array") fail("incomplete preferred group membership")
             line = codes[i] "\t" encode(name) "\t" encode(field(obj, "now")) "\t" (active[codes[i]] ? 1 : 0)
-            if (action == "snapshot") print line > (ENVIRON["PREFERRED_WORK"] "/groups")
+            if (action == "snapshot") {
+                print line > (ENVIRON["PREFERRED_WORK"] "/groups")
+                for (j = 1; j <= count[all]; j++)
+                    print codes[i] "\t" encode(value[child[all,j]]) > (ENVIRON["PREFERRED_WORK"] "/members")
+            }
             else print line
         }
     }
@@ -322,19 +381,6 @@ END {
         print key != "" ? "true" : "false"
         print boolsetting("allow_country_change", "false")
         print provider
-    } else if (action == "providers") {
-        list = get(root, "providers")
-        if (!list) {
-            print encode("1.主要地址"); print encode("2.备用地址"); print encode("3.额外地址")
-        } else {
-            if (kind[list] != "array" || count[list] < 1 || count[list] > 16) fail("invalid providers list")
-            for (i = 1; i <= count[list]; i++) {
-                item = child[list,i]; name = value[item]
-                if (kind[item] != "string" || name == "" || name == "." || name == ".." || !clean(name) || length(name) > 256 || selected_providers[name]++)
-                    fail("invalid or duplicate provider name")
-                print encode(name)
-            }
-        }
     } else if (action == "controller-auth") {
         secret = textsetting("controller_secret", "")
         if (secret != "") print "header = " quote("Authorization: Bearer " secret)
@@ -375,17 +421,35 @@ END {
     else if (action == "inventory" || action == "snapshot") {
         proxies = get(root, "proxies"); probe = get(proxies, "优选·探测出口"); all = get(probe, "all")
         if (field(probe, "type") != "Selector" || kind[all] != "array") fail("preferred probe group is missing")
-        # Provider nodes are separate from GET /proxies in mihomo v1.19.33.
-        for (i = 2; i <= document_count; i++) {
-            list = get(documents[i], "proxies")
-            if (kind[list] != "array") fail("invalid provider response")
-            for (j = 1; j <= count[list]; j++) {
-                obj = child[list,j]; name = field(obj, "name")
-                provider_nodes[name] = obj; occurrences[name]++
+        exclude_landing("家宽·出口", 0)
+        if (action == "snapshot") printf "%s", "" > (ENVIRON["PREFERRED_WORK"] "/providers")
+        # Discover names from the live registry. Legacy settings.providers is ignored.
+        # A single provider snapshot also avoids rename races between per-name GETs.
+        if (document_count > 1) {
+            registry = get(documents[2], "providers")
+            if (document_count != 2 || kind[registry] != "object") fail("invalid provider registry")
+            for (i = 1; i <= count[registry]; i++) {
+                pd = child[registry,i]; vehicle = field(pd, "vehicleType")
+                if (kind[pd] != "object" || member[pd] == "" || !clean(member[pd]) ||
+                    kind[get(pd, "name")] != "string" || field(pd, "name") != member[pd] ||
+                    field(pd, "type") != "Proxy" || kind[get(pd, "proxies")] != "array")
+                    fail("incomplete provider metadata")
+                if (vehicle == "Compatible") continue
+                if (vehicle != "HTTP" && vehicle != "File" && vehicle != "Inline") fail("unknown provider vehicle type")
+                if (action == "snapshot") print encode(member[pd]) > (ENVIRON["PREFERRED_WORK"] "/providers")
+                list = get(pd, "proxies")
+                for (j = 1; j <= count[list]; j++) {
+                    obj = child[list,j]; name = field(obj, "name")
+                    if (kind[obj] != "object" || kind[get(obj, "name")] != "string" || name == "" || !clean(name) ||
+                        kind[get(obj, "type")] != "string" || field(obj, "type") == "" || kind[get(obj, "alive")] != "boolean")
+                        fail("invalid provider node")
+                    provider_nodes[name] = obj; occurrences[name]++
+                }
             }
         }
         for (i = 1; i <= count[all]; i++) {
             name = value[child[all,i]]; obj = get(proxies, name)
+            if (emitted[name]++ || landing_nodes[name] || (obj && provider_nodes[name])) continue
             if (!obj) obj = provider_nodes[name]
             if (occurrences[name] > 1) continue
             t = tolower(field(obj, "type"))

@@ -12,6 +12,7 @@ import json
 import os
 import re
 import shutil
+import socket
 import socketserver
 import subprocess
 import tempfile
@@ -56,6 +57,35 @@ def run_json(action, data=None, **extra):
         timeout=10,
     )
     return result
+
+
+def run_snapshot(proxies, providers):
+    with tempfile.TemporaryDirectory(prefix="surfing-discovery-") as directory:
+        root = Path(directory)
+        for name, data in (("proxies", proxies), ("providers", providers)):
+            write(root / (name + ".json"), json.dumps(data, ensure_ascii=True))
+        result = subprocess.run(
+            [
+                BUSYBOX,
+                "awk",
+                "-f",
+                str(SCRIPTS / "box.preferred.json.awk"),
+                str(root / "proxies.json"),
+                str(root / "providers.json"),
+            ],
+            env=dict(
+                os.environ,
+                LC_ALL="C",
+                PREFERRED_ACTION="snapshot",
+                PREFERRED_MODE="rule",
+                PREFERRED_WORK=root.as_posix(),
+            ),
+            capture_output=True,
+            timeout=30,
+            check=False,
+        )
+        names = root / "providers"
+        return result, names.read_text() if names.exists() else ""
 
 
 def proxycheck_result(address="198.51.100.10", country="SG", risk=50):
@@ -385,6 +415,254 @@ class JsonTests(unittest.TestCase):
             self.assertEqual((root / "slept").read_text().strip(), "3")
 
 
+class DiscoveryTests(unittest.TestCase):
+    def node(self, name):
+        return {
+            "name": name,
+            "type": "Socks5",
+            "alive": True,
+            "history": [{"delay": 12}],
+        }
+
+    def provider(self, name, nodes, vehicle="Inline"):
+        # Deliberately put proxies before vehicleType to check member-order safety.
+        return {"proxies": nodes, "vehicleType": vehicle, "name": name, "type": "Proxy"}
+
+    def registry(self, names, landing_nodes=()):
+        return {
+            "proxies": {
+                "优选·探测出口": {"type": "Selector", "all": names},
+                "家宽·出口": {"type": "Selector", "all": list(landing_nodes)},
+            }
+        }
+
+    def test_arbitrary_provider_names_and_generated_duplicates(self):
+        name = '线路 "A" / 东京 🚀'
+        source = '订阅 "自定义" / ?space=一'
+        node = self.node(name)
+        result, names = run_snapshot(
+            self.registry([name, name]),
+            {
+                "providers": {
+                    source: self.provider(source, [node]),
+                    "generated": self.provider("generated", [node], "Compatible"),
+                }
+            },
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(
+            result.stdout.decode().splitlines(), [ENCODE(name) + "\t1\t12"]
+        )
+        self.assertEqual(names.strip(), ENCODE(source))
+
+    def test_real_duplicates_and_landing_members_are_not_candidates(self):
+        duplicate = self.node("same name")
+        home = self.node("私有账号节点")
+        normal = self.node("ordinary")
+        result, _ = run_snapshot(
+            self.registry(["same name", "私有账号节点", "ordinary"], ["私有账号节点"]),
+            {
+                "providers": {
+                    "A": self.provider("A", [duplicate, normal]),
+                    "B": self.provider("B", [duplicate]),
+                    "renamed private source": self.provider(
+                        "renamed private source", [home], "File"
+                    ),
+                }
+            },
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.decode().strip(), "ordinary\t1\t12")
+
+    def test_incomplete_or_unknown_registry_is_an_error(self):
+        registry = self.registry(["ordinary"])
+        for providers in (
+            {},
+            {"providers": []},
+            {"providers": {"A": {"name": "A", "type": "Proxy", "vehicleType": "HTTP"}}},
+            {"providers": {"A": self.provider("wrong-name", [])}},
+            {"providers": {"A": self.provider("A", [], "Unknown")}},
+            {
+                "providers": {
+                    "A": self.provider("A", [{"name": "incomplete", "type": "Socks5"}])
+                }
+            },
+        ):
+            result, _ = run_snapshot(registry, providers)
+            self.assertNotEqual(result.returncode, 0, providers)
+
+    def test_generated_graph_does_not_consume_the_retained_node_limit(self):
+        name = "ordinary"
+        repeated = [{"name": "group", "type": "Selector", "all": [name] * 100}] * 2200
+        result, _ = run_snapshot(
+            self.registry([name]),
+            {
+                "providers": {
+                    "actual": self.provider("actual", [self.node(name)], "HTTP"),
+                    "generated": self.provider("generated", repeated, "Compatible"),
+                }
+            },
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.decode().strip(), "ordinary\t1\t12")
+
+
+class MigrationTests(unittest.TestCase):
+    def convert(self, source):
+        return subprocess.run(
+            [BUSYBOX, "awk", "-f", str(SCRIPTS / "box.preferred.migrate.awk")],
+            input=source.encode(),
+            capture_output=True,
+            check=False,
+            timeout=10,
+            env=dict(os.environ, LC_ALL="C"),
+        )
+
+    def test_current_defaults_are_byte_identical_and_legacy_groups_are_targeted(self):
+        source = (REPO / "box_bll/clash/config.yaml").read_text(encoding="utf-8")
+        self.assertEqual(self.convert(source).stdout.decode(), source)
+        legacy = source.replace("    include-all-providers: true\n", "")
+        legacy = legacy.replace("<<: *preferred_nodes", "<<: *A")
+        result = self.convert(legacy)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        before = yaml.safe_load(legacy)
+        after = yaml.safe_load(result.stdout)
+        for group in before["proxy-groups"]:
+            if group["name"].startswith("优选·"):
+                group["include-all-providers"] = True
+        self.assertEqual(before, after)
+        self.assertEqual(self.convert(result.stdout.decode()).stdout, result.stdout)
+
+    def test_flow_groups_quoted_keys_and_multiline_sequences(self):
+        item = """{name: '优选·探测出口', type: select, proxies: [REJECT], use: ['订阅, A'], filter: 'a}b,c'}"""
+        cases = (
+            "proxy-groups:\n  - " + item + "\n",
+            "proxy-groups:\n- {name: 优选·探测出口, type: select, proxies: [REJECT], use: [provider#tag]}\n",
+            "proxy-groups: [" + item + "]\n",
+            "proxy-groups: [\n  "
+            + item
+            + ",\n  {name: ordinary, type: select, proxies: [DIRECT]}]\n",
+            "'proxy-groups':\n- type: select\n  'name': '优选·ALL出口'\n  proxies: [REJECT]\n  include-all-providers: false\n",
+            'proxy-groups:\n- {"name": "优选·SG出口", "include-all-providers": false, type: select, proxies: [REJECT]}\n',
+            'proxy-groups:\n- name: "\\u4f18\\u9009\\u00b7ALL\\u51fa\\u53e3"\n  type: select\n  proxies: [REJECT]\n',
+        )
+        for source in cases:
+            with self.subTest(source=source):
+                result = self.convert(source)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                expected = yaml.safe_load(source)
+                for group in expected["proxy-groups"]:
+                    if group["name"].startswith("优选·"):
+                        group["include-all-providers"] = True
+                self.assertEqual(yaml.safe_load(result.stdout), expected)
+                self.assertEqual(
+                    self.convert(result.stdout.decode()).stdout, result.stdout
+                )
+        self.assertEqual(
+            self.convert("proxy-groups: []\n").stdout, b"proxy-groups: []\n"
+        )
+
+    def test_duplicate_preferred_groups_are_rejected(self):
+        source = "proxy-groups:\n- name: 优选·ALL出口\n  proxies: [REJECT]\n" * 2
+        self.assertNotEqual(self.convert(source).returncode, 0)
+
+    def run_migration(self, root):
+        return subprocess.run(
+            [
+                SHELL,
+                str(SCRIPTS / "box.preferred.migrate"),
+                str(root),
+                str(root / "clash/config.yaml"),
+                MIHOMO,
+            ],
+            capture_output=True,
+            check=False,
+            timeout=20,
+        )
+
+    def fixture(self):
+        return {
+            "mode": "rule",
+            "rules": ["MATCH,DIRECT"],
+            "proxy-providers": {
+                "任意订阅 / 当前名称": {
+                    "type": "inline",
+                    "payload": [
+                        {
+                            "name": "fixture-node",
+                            "type": "socks5",
+                            "server": "127.0.0.1",
+                            "port": 9,
+                        }
+                    ],
+                }
+            },
+            "proxy-groups": [
+                {
+                    "name": "优选·探测出口",
+                    "type": "select",
+                    "proxies": ["REJECT"],
+                    "use": ["old-provider-name"],
+                },
+                {
+                    "name": "优选·ALL出口",
+                    "type": "select",
+                    "proxies": ["REJECT"],
+                    "use": ["old-provider-name"],
+                },
+                {
+                    "name": "personal group",
+                    "type": "select",
+                    "proxies": ["DIRECT"],
+                    "include-all-providers": False,
+                },
+            ],
+        }
+
+    def test_core_checked_migration_preserves_backup_and_private_settings(self):
+        if not MIHOMO:
+            self.skipTest("pass --mihomo for migration validation")
+        with tempfile.TemporaryDirectory(
+            prefix="surfing-preferred-migration-"
+        ) as directory:
+            root = Path(directory)
+            config = root / "clash/config.yaml"
+            source = yaml.safe_dump(self.fixture(), allow_unicode=True, sort_keys=False)
+            write(config, source)
+            private = root / "clash/private/preferred.json"
+            personal = '{"enabled": true, "api_key": "fixture-only", "providers": ["old"], "daily_budget": 37}\n'
+            write(private, personal)
+            result = self.run_migration(root)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(
+                config.with_suffix(".yaml.preferred.bak").read_text(encoding="utf-8"),
+                source,
+            )
+            self.assertEqual(private.read_text(), personal)
+            migrated = config.read_bytes()
+            result = self.run_migration(root)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(config.read_bytes(), migrated)
+            self.assertFalse(list(config.parent.glob("*.preferred-check.*")))
+
+    def test_failed_core_check_keeps_original_config(self):
+        if not MIHOMO:
+            self.skipTest("pass --mihomo for migration validation")
+        with tempfile.TemporaryDirectory(
+            prefix="surfing-preferred-migration-"
+        ) as directory:
+            root = Path(directory)
+            fixture = self.fixture()
+            fixture["mixed-port"] = "invalid-port"
+            config = root / "clash/config.yaml"
+            source = yaml.safe_dump(fixture, allow_unicode=True, sort_keys=False)
+            write(config, source)
+            result = self.run_migration(root)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertEqual(config.read_text(encoding="utf-8"), source)
+            self.assertFalse(config.with_suffix(".yaml.preferred.bak").exists())
+
+
 class LifecycleTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix="surfing-preferred-state-")
@@ -405,10 +683,14 @@ class LifecycleTests(unittest.TestCase):
                 "/dev/tmp/wifi_bypassed", (self.root / "bypassed").as_posix()
             )
             write(self.root / "scripts" / name, source)
-        write(
-            self.root / "clash/preferred.example.json",
-            (REPO / "box_bll/clash/preferred.example.json").read_text(encoding="utf-8"),
+        controller_guard = socket.socket()
+        controller_guard.bind(("127.0.0.1", 0))
+        self.addCleanup(controller_guard.close)
+        defaults = json.loads(
+            (REPO / "box_bll/clash/preferred.example.json").read_text(encoding="utf-8")
         )
+        defaults["controller"] = f"http://127.0.0.1:{controller_guard.getsockname()[1]}"
+        write(self.root / "clash/preferred.example.json", json.dumps(defaults))
         self.state = self.root / "clash/private/preferred"
         result = self.run_worker("init")
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -568,6 +850,36 @@ class IntelligenceHandler(http.server.BaseHTTPRequestHandler):
 
     def log_message(self, *_):
         pass
+
+
+class SnapshotControllerHandler(http.server.BaseHTTPRequestHandler):
+    """Real HTTP boundary for unavailable/incomplete discovery responses."""
+
+    def log_message(self, *_args):
+        pass
+
+    def do_GET(self):
+        self.server.calls.append(("GET", self.path))
+        if self.path == "/providers/proxies":
+            code, payload = self.server.response_status, self.server.response_body
+        else:
+            request = urllib.request.Request(
+                self.server.upstream + self.path,
+                headers={"Authorization": self.headers.get("Authorization", "")},
+            )
+            with urllib.request.build_opener(urllib.request.ProxyHandler({})).open(
+                request, timeout=5
+            ) as response:
+                code, payload = response.status, response.read()
+        self.send_response(code)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(payload)))
+        self.end_headers()
+        self.wfile.write(payload)
+
+    def do_PUT(self):
+        self.server.calls.append(("PUT", self.path))
+        self.send_error(405)
 
 
 class WorkerTests(unittest.TestCase):
@@ -775,6 +1087,27 @@ class WorkerTests(unittest.TestCase):
 
     def save_settings(self):
         write(self.root / "clash/private/preferred.json", json.dumps(self.settings))
+
+    def reload_config(self):
+        config = self.root / "core/config.yaml"
+        write(config, yaml.safe_dump(self.cfg, allow_unicode=True, sort_keys=False))
+        self.api("/configs", "PUT", {"path": str(config)})
+        self.choose("总模式", "🌐 本机·本地直连")
+        self.choose("OpenAI", "ALL·优选")
+        self.choose("Claude", "狮城地区·优选")
+        self.choose("Linux.do", "香港地区·优选")
+
+    def rename_providers(self, names):
+        self.cfg["proxy-providers"] = {
+            names.get(name, name): provider
+            for name, provider in self.cfg["proxy-providers"].items()
+        }
+        # The ordinary user config must still be valid. Preferred groups have
+        # no per-provider use list to edit: they follow include-all-providers.
+        for group in self.cfg["proxy-groups"]:
+            if "use" in group:
+                group["use"] = [names.get(name, name) for name in group["use"]]
+        self.reload_config()
 
     def stop_core(self):
         if self.process.poll() is None:
@@ -1141,11 +1474,133 @@ class WorkerTests(unittest.TestCase):
     def test_incomplete_provider_snapshot_does_not_clear_current_selection(self):
         self.once()
         previous = {code: self.current(code) for code in ("ALL", "SG", "HK")}
-        self.settings["providers"] = ["1.主要地址", "missing-provider"]
+        registry = self.api("/providers/proxies")
+        del registry["providers"]["1.主要地址"]["proxies"]
+        controller = self.serve(
+            http.server.ThreadingHTTPServer,
+            SnapshotControllerHandler,
+            upstream=f"http://127.0.0.1:{self.api_port}",
+            calls=[],
+            response_status=200,
+            response_body=json.dumps(registry).encode(),
+        )
+        self.settings["controller"] = f"http://127.0.0.1:{controller.server_address[1]}"
         self.save_settings()
         self.once(expected_code=1)
         self.assertEqual({code: self.current(code) for code in previous}, previous)
         self.assertEqual(len(self.intelligence.lookups), 2)
+        self.assertFalse(any(method == "PUT" for method, _ in controller.calls))
+        self.assertIn("invalid snapshot", (self.state / "summary").read_text())
+        controller.response_status = 503
+        self.once(expected_code=1)
+        self.assertEqual({code: self.current(code) for code in previous}, previous)
+        self.assertEqual(len(self.intelligence.lookups), 2)
+        self.assertIn("response unavailable", (self.state / "summary").read_text())
+
+    def test_provider_renames_ignore_legacy_lists_and_preserve_settings(self):
+        self.settings["providers"] = ["an old custom name", "missing-provider"]
+        self.save_settings()
+        personal = (self.root / "clash/private/preferred.json").read_bytes()
+        self.once()
+        previous = {code: self.current(code) for code in ("ALL", "SG", "HK")}
+        names = {
+            "1.主要地址": '订阅 "A" / 東京 ?',
+            "2.备用地址": "second custom source",
+            "3.额外地址": "以后还会改",
+            "家宽账号": "private source renamed too",
+        }
+        self.rename_providers(names)
+        self.once()
+        self.assertEqual({code: self.current(code) for code in previous}, previous)
+        self.assertEqual(len(self.intelligence.lookups), 2)
+        self.assertEqual(
+            (self.root / "clash/private/preferred.json").read_bytes(), personal
+        )
+        discovered = (self.state / "providers").read_text().splitlines()
+        self.assertCountEqual(discovered, [ENCODE(name) for name in names.values()])
+        self.assertIn(
+            "Provider discovery: automatic", (self.state / "summary").read_text()
+        )
+
+    def test_added_and_deleted_subscription_is_seen_without_settings_changes(self):
+        hong_kong = self.cfg["proxy-providers"]["1.主要地址"]["payload"].pop()
+        self.reload_config()
+        self.once()
+        self.assertEqual(self.current("HK"), REJECT)
+        self.assertEqual(len(self.intelligence.lookups), 1)
+        personal = (self.root / "clash/private/preferred.json").read_bytes()
+
+        self.cfg["proxy-providers"]["new subscription / 香港"] = {
+            "type": "inline",
+            "payload": [hong_kong],
+        }
+        self.reload_config()
+        self.once()
+        self.assertEqual(self.current("HK"), self.names[2])
+        self.assertEqual(len(self.intelligence.lookups), 2)
+
+        del self.cfg["proxy-providers"]["new subscription / 香港"]
+        self.reload_config()
+        self.once()
+        self.assertEqual(self.current("HK"), REJECT)
+        self.assertEqual(len(self.intelligence.lookups), 2)
+        self.assertIn("198.51.100.20", (self.state / "ips").read_text())
+        self.assertEqual(
+            (self.root / "clash/private/preferred.json").read_bytes(), personal
+        )
+
+    def test_renamed_private_provider_is_excluded_by_landing_group_membership(self):
+        self.cfg["proxy-providers"]["家宽账号"]["payload"] = [
+            {
+                "name": "residential-only-node",
+                "type": "socks5",
+                "server": "127.0.0.1",
+                "port": self.nodes[2].server_address[1],
+                "udp": False,
+            }
+        ]
+        self.rename_providers({"家宽账号": "my private file / custom name"})
+        self.once()
+        self.assertNotIn(
+            "residential-only-node", (self.state / "report.tsv").read_text()
+        )
+        self.assertIn("Candidate nodes: 3", (self.state / "summary").read_text())
+        self.assertEqual(sum(path == "/ip" for path in self.nodes[2].paths), 1)
+
+    def test_scope_filter_only_ranks_nodes_that_group_can_select(self):
+        group = next(
+            group
+            for group in self.cfg["proxy-groups"]
+            if group["name"] == "优选·SG出口"
+        )
+        group["filter"] = "^B "
+        self.reload_config()
+        self.once()
+        self.assertEqual(self.current("SG"), self.names[1])
+        self.assertEqual(self.current("HK"), self.names[2])
+
+    def test_status_distinguishes_disabled_missing_key_and_empty_candidates(self):
+        self.settings["enabled"] = False
+        self.save_settings()
+        self.once()
+        self.assertIn(
+            "Disabled: set enabled=true", (self.state / "summary").read_text()
+        )
+        self.settings.update(
+            {"enabled": True, "reputation_provider": "ipqs", "api_key": ""}
+        )
+        self.save_settings()
+        self.once()
+        self.assertIn("IPQS API key missing", (self.state / "summary").read_text())
+        self.use_proxycheck()
+        self.cfg["proxy-providers"]["1.主要地址"]["payload"] = [
+            {"name": "no-nodes", "type": "reject"}
+        ]
+        self.reload_config()
+        self.once()
+        self.assertIn("No candidate nodes", (self.state / "summary").read_text())
+        self.assertEqual(self.intelligence.lookups, [])
+        self.assertEqual(self.intelligence.proxycheck_calls, [])
 
     def test_rate_limit_backoff_and_unknown_results(self):
         self.intelligence.limited = True

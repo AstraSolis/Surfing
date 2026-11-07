@@ -4,6 +4,10 @@ function read_inventory(    line,a) {
         if (split(line,a,"\t") != 3) continue
         present[a[1]] = 1; alive[a[1]] = a[2]; latency[a[1]] = a[3]
     }
+    while ((getline line < (work "/members")) > 0) {
+        if (split(line,a,"\t") != 2) continue
+        scoped[a[1]] = 1; selectable[a[1],a[2]] = 1
+    }
 }
 function read_state(    line,a,i,fields) {
     while ((getline line < (state "/nodes")) > 0) {
@@ -35,6 +39,7 @@ function missing_report(name,    v4,v6) {
 }
 function eligible(name, scope,    v4,v6,c6,r6,at6) {
     if (!present[name] || !known[name] || node[name,2] + 0 <= 0 || node[name,2] > now || failures[name] >= 3) return 0
+    if (scoped[scope] && !selectable[scope,name]) return 0
     v4 = node[name,3]; v6 = node[name,4]
     cc = ip[v4,3]; risk = ip[v4,4]; report_at = ip[v4,2] + 0
     if (cc !~ /^[A-Z][A-Z]$/ || report_at <= 0 || report_at > now || ip[v4,5] != "0" || risk > maxrisk) return 0

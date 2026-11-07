@@ -3,6 +3,7 @@
 - 首个 AstraSolis 定制稳定版，基于 GitMetaio/Surfing v7.8.4；保留原作者署名和 GPL-3.0 许可证。
 - 模块管理器更新清单迁至 AstraSolis/Surfing 已发布稳定版的附件。稳定版 `versionCode=1654`，ZIP 和日志固定到版本标签；普通 main 提交只生成手动测试用 Alpha。
 - 保留 Linux.do 独立分流、广告默认拦截与规则优先级调整，以及固定 SOCKS5 家宽落地、独立前置、UDP 拒绝、失败不回退和私有账号升级保留。
+- 优选自动发现当前订阅和节点，兼容改名、新增、删除及旧 JSON 名称列表；已有优选组在升级时定向迁移，保留个人配置与账号。状态区分未启用、缺少 IPQS Key、无候选和发现失败。
 - 构建固定 mihomo v1.19.33、Zashboard v3.30.0 和 curl 的源码版本及 SHA-256，验证预编译 SurfingTile v7.0.0；记录源码、依赖、包内文件和产物校验和。
 - 稳定版在全部附件上传、校验完成后才公开；重复执行不会覆盖已发布附件或把 latest 回退。发布不再依赖下载统计或 data 分支。
 - 上游用户须先手动覆盖安装一次定制 ZIP。升级沿用设备核心，安装前需确认支持 `rematch`；新功能建议选择“使用新默认配置”，再核对订阅与个人设置。详见 [迁移指南](https://github.com/AstraSolis/Surfing/blob/main/docs/MIGRATION.md)。

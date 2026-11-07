@@ -3,7 +3,6 @@
   "reputation_provider": "proxycheck",
   "proxycheck_key": "",
   "api_key": "",
-  "providers": ["1.主要地址", "2.备用地址", "3.额外地址"],
   "controller": "http://127.0.0.1:9090",
   "controller_secret": "",
   "probe_port": 7894,

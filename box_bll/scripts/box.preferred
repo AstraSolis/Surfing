@@ -84,7 +84,6 @@ settings() {
     [ "$PROBE_PORT" != "$MANAGEMENT_PORT" ] || return 1
     printf '%s\n' "$POLL_INTERVAL" >"$STATE/poll-seconds"
     json controller-auth "$WORK/settings.json" >"$WORK/controller.curl" || return 1
-    json providers "$WORK/settings.json" >"$WORK/providers" || return 1
     IP_LEDGER=ips
     RETRY_LEDGER=retry
     KEYLESS=false
@@ -131,7 +130,14 @@ upsert() {
 row() { awk -F '\t' -v key="$2" '$1 == key {print; exit}' "$STATE/$1"; }
 api() {
     # The controller credential is never passed to an external URL or process argv.
-    curl -q -sS --connect-timeout 3 --max-time 8 --max-filesize 4194304 \
+    api_limit=4194304
+    if [ "$1" = --provider-registry ]; then
+        # Generated Compatible providers repeat group members. The JSON reader
+        # skips their node graphs instead of allocating every repeated object.
+        api_limit=33554432
+        shift
+    fi
+    curl -q -sS --connect-timeout 3 --max-time 8 --max-filesize "$api_limit" \
         --noproxy '*' --config "$WORK/controller.curl" "$@" 2>"$WORK/curl.error"
 }
 get_api() { api --fail "$CONTROLLER/$1" -o "$2"; }
@@ -425,7 +431,10 @@ tick() (
     LOOKUP_PAUSED=false
     REJECT=$(encode '⛔️ 禁止·拒绝连接')
     PROBE_GROUP=$(encode '优选·探测出口')
-    settings || return 1
+    if ! settings; then
+        printf 'Invalid preferred.json settings; fix the configuration and run scan again.\n' >"$STATE/summary"
+        return 1
+    fi
     if paused; then
         printf 'Paused by module/manual/network-bypass state.\n' >"$STATE/summary"
         return 0
@@ -434,7 +443,11 @@ tick() (
         # Old configurations may have no preferred listeners/groups at all.
         # A disabled worker must still exit, including when controller credentials differ.
         printf 'false\n' >"$STATE/enabled"
-        printf 'Disabled or missing IPQS API key. Configure clash/private/preferred.json.\n' >"$STATE/summary"
+        if [ "$ENABLED" != true ]; then
+            printf 'Disabled: set enabled=true in clash/private/preferred.json, then run scan.\n' >"$STATE/summary"
+        else
+            printf 'IPQS API key missing: configure api_key or use reputation_provider=proxycheck.\n' >"$STATE/summary"
+        fi
         if get_api proxies "$WORK/proxies.json" && json groups "$WORK/proxies.json" >"$WORK/groups"; then
             while IFS="$TAB" read -r scope group current active; do
                 [ "$current" = "$REJECT" ] || select_node "$group" "$REJECT" || true
@@ -442,25 +455,35 @@ tick() (
         fi
         return 0
     fi
+    printf 'true\n' >"$STATE/enabled"
     if ! get_api proxies "$WORK/proxies.json" || ! get_api configs "$WORK/configs.json"; then
+        printf 'Controller unavailable; check controller/controller_secret. Previous selections retained.\n' >"$STATE/summary"
         log 'Controller unavailable; no group selection changed.'
         return 1
     fi
-    PREFERRED_MODE=$(json mode "$WORK/configs.json") || return 1
+    PREFERRED_MODE=$(json mode "$WORK/configs.json") || {
+        printf 'Invalid controller configuration response. Previous selections retained.\n' >"$STATE/summary"
+        return 1
+    }
     export PREFERRED_MODE
-    set -- "$WORK/proxies.json"
-    provider_index=0
-    while IFS= read -r provider_name; do
-        provider_index=$((provider_index + 1))
-        if get_api "providers/proxies/$provider_name" "$WORK/provider.$provider_index.json"; then
-            set -- "$@" "$WORK/provider.$provider_index.json"
-        else
-            log "Provider unavailable: $provider_name; retaining current selections."
-            return 1
-        fi
-    done <"$WORK/providers"
-    json snapshot "$@" >"$WORK/inventory" || return 1
-    printf 'true\n' >"$STATE/enabled"
+    printf 'Discovering subscriptions from the running core (automatic mode).\n' >"$STATE/summary"
+    if ! api --provider-registry --fail "$CONTROLLER/providers/proxies" -o "$WORK/providers.json"; then
+        printf 'Provider discovery failed: controller response unavailable or exceeds 32 MiB. Previous selections retained.\n' >"$STATE/summary"
+        log 'Provider discovery failed; retaining current selections.'
+        return 1
+    fi
+    if ! json snapshot "$WORK/proxies.json" "$WORK/providers.json" >"$WORK/inventory" 2>"$WORK/discovery.error"; then
+        printf 'Provider discovery failed: invalid snapshot or missing preferred probe group. Previous selections retained.\n' >"$STATE/summary"
+        cat "$WORK/discovery.error" >>"$STATE/summary"
+        log 'Invalid provider snapshot; retaining current selections.'
+        return 1
+    fi
+    sort "$WORK/providers" >"$WORK/providers.sorted"
+    mv -f "$WORK/providers.sorted" "$STATE/providers"
+    provider_count=$(wc -l <"$WORK/providers")
+    candidate_count=$(wc -l <"$WORK/inventory")
+    printf 'Checking candidates (automatic discovery).\nSubscriptions discovered: %s\nCandidate nodes: %s\n' \
+        "$provider_count" "$candidate_count" >"$STATE/summary"
     # Provider health is one signal; confirm failures using a second endpoint.
     check_health
     ranks
@@ -486,8 +509,17 @@ tick() (
     select_node "$PROBE_GROUP" "$REJECT" || true
     policy status >"$WORK/report"
     mv -f "$WORK/report" "$STATE/report.tsv"
-    printf 'Last pass: %s UTC\nNodes this pass: %s\nReputation source: %s\nAnonymous per-node queries: %s\nReputation budget: %s/day (all nodes combined)\nReports are snapshots, not live trust guarantees.\n' \
-        "$(date -u '+%Y-%m-%d %H:%M:%S')" "$processed" "$REPUTATION_PROVIDER" "$KEYLESS" "$DAILY_BUDGET" >"$STATE/summary"
+    qualified_count=$(cat "$WORK/"*.rank | cut -f 1 | sort -u | wc -l)
+    if [ "$candidate_count" -eq 0 ]; then
+        pass_status='No candidate nodes: check subscription contents and preferred group membership.'
+    elif [ "$qualified_count" -eq 0 ]; then
+        pass_status='No qualified nodes yet: check lookup status and the candidate report.'
+    else
+        pass_status='Candidate checks completed.'
+    fi
+    printf '%s\nLast pass: %s UTC\nProvider discovery: automatic\nSubscriptions discovered: %s\nCandidate nodes: %s\nQualified nodes in last ranking: %s\nNodes this pass: %s\nReputation source: %s\nAnonymous per-node queries: %s\nReputation budget: %s/day (all nodes combined)\nReports are snapshots, not live trust guarantees.\n' \
+        "$pass_status" "$(date -u '+%Y-%m-%d %H:%M:%S')" "$provider_count" "$candidate_count" "$qualified_count" \
+        "$processed" "$REPUTATION_PROVIDER" "$KEYLESS" "$DAILY_BUDGET" >"$STATE/summary"
     if [ ! -s "$WORK/jobs" ] && [ "$PREFERRED_SCAN_REQUEST" -gt 0 ]; then rm -f "$STATE/scan.request"; fi
     # Keep logs bounded without touching unrelated core logs.
     tail -n 300 "$STATE/events.log" 2>/dev/null >"$WORK/events"
@@ -545,7 +577,13 @@ case "$1" in
     status)
         cat "$STATE/summary" 2>/dev/null
         cat "$STATE/lookup-status"
-        printf '\nSelections (URI-encoded node names):\n'
+        printf '\nLast discovered subscriptions:\n'
+        if [ -f "$STATE/providers" ]; then
+            while IFS= read -r provider_name; do
+                printf '  %s\n' "$(PREFERRED_VALUE=$provider_name json decode /dev/null)"
+            done <"$STATE/providers"
+        fi
+        printf '\nRemembered selections (URI-encoded node names):\n'
         cat "$STATE/choices"
         printf '\nReputation calls today:\n'
         cat "$STATE/quota"

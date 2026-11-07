@@ -238,7 +238,7 @@ deploy_ai_rules() {
 
 choose_language
 check_ai_rules
-for preferred_file in scripts/box.preferred scripts/box.preferred.json.awk scripts/box.preferred.policy.awk clash/preferred.example.json; do
+for preferred_file in scripts/box.preferred scripts/box.preferred.json.awk scripts/box.preferred.policy.awk scripts/box.preferred.migrate scripts/box.preferred.migrate.awk clash/preferred.example.json; do
   [ -s "$MODPATH/box_bll/$preferred_file" ] || abort "Error: Missing preferred-mode file: $preferred_file"
 done
 
@@ -335,6 +335,8 @@ sync_version_from_module_prop
 
 ASH_STANDALONE=1 "$BIN_PATH/busybox" sh "$SCRIPTS_PATH/box.landing" init "$BOX_BLL_PATH" "$CONFIG_FILE" || \
   abort "Error: Unable to prepare private landing configuration."
+ASH_STANDALONE=1 "$BIN_PATH/busybox" sh "$SCRIPTS_PATH/box.preferred.migrate" "$BOX_BLL_PATH" "$CONFIG_FILE" "$BIN_PATH/clash" || \
+  abort "Error: Unable to migrate preferred groups; selected config was retained."
 ASH_STANDALONE=1 "$BIN_PATH/busybox" sh "$SCRIPTS_PATH/box.preferred" init "$BOX_BLL_PATH" || \
   abort "Error: Unable to prepare private preferred-mode settings."
 
