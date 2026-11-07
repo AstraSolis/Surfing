@@ -1,5 +1,9 @@
 # 功能与发布验证
 
+## 应用禁网
+
+运行 `python tests/test_block.py --shell /path/to/ash`。测试在临时目录运行实际 `box.block` 与服务启停代码，使用模拟包列表和 IPv4/IPv6 防火墙，验证删除最后一项、保留其他名单、核心已退出时清理、核心重启恢复和模块停用清理。不会操作主机防火墙或 Android 设备；设备上的 UID、实际规则和停止后的连通性仍需实测。
+
 ## AI 分流
 
 准备 Python 3.10+、PyYAML 和主机平台的 mihomo v1.19.33：

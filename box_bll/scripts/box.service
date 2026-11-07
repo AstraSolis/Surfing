@@ -167,6 +167,7 @@ start_service() {
 
         if start_bin; then
             log Info "${bin_name} 核心已准备就绪 (PID: $(cat "${pid_file}"))."
+            [ -f "${scripts_dir}/box.block" ] && "${scripts_dir}/box.block" enable >/dev/null 2>&1
             return 0
         fi
 
@@ -180,6 +181,7 @@ start_service() {
 }
 
 stop_service() {
+    [ -f "${scripts_dir}/box.block" ] && "${scripts_dir}/box.block" disable >/dev/null 2>&1
     if display_bin_status; then
         log Warn "正在下发 SIGTERM 终止 ${bin_name} 进程."
         kill "$(cat "${pid_file}")" 2>/dev/null || killall "${bin_name}"
