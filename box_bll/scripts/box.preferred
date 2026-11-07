@@ -48,7 +48,7 @@ init() {
     fi
     [ -f "$SETTINGS" ] || return 1
     chmod 600 "$SETTINGS" || return 1
-    for ledger in nodes ips health choices quota retry; do
+    for ledger in nodes ips ips.proxycheck health choices quota retry retry.proxycheck retry.proxycheck-exits lookup-status; do
         [ ! -L "$STATE/$ledger" ] || return 1
         if [ -e "$STATE/$ledger" ]; then
             [ -f "$STATE/$ledger" ] || return 1
@@ -59,7 +59,9 @@ init() {
     done
 }
 settings() {
-    json settings "$SETTINGS" >"$WORK/settings" || return 1
+    # Freeze the provider, credentials and route together for this pass.
+    cp "$SETTINGS" "$WORK/settings.json" || return 1
+    json settings "$WORK/settings.json" >"$WORK/settings" || return 1
     {
         read -r ENABLED
         read -r CONTROLLER
@@ -77,11 +79,24 @@ settings() {
         read -r POLL_INTERVAL
         read -r HAS_KEY
         read -r ALLOW_COUNTRY_CHANGE
+        read -r REPUTATION_PROVIDER
     } <"$WORK/settings"
     [ "$PROBE_PORT" != "$MANAGEMENT_PORT" ] || return 1
     printf '%s\n' "$POLL_INTERVAL" >"$STATE/poll-seconds"
-    json controller-auth "$SETTINGS" >"$WORK/controller.curl" || return 1
-    json providers "$SETTINGS" >"$WORK/providers" || return 1
+    json controller-auth "$WORK/settings.json" >"$WORK/controller.curl" || return 1
+    json providers "$WORK/settings.json" >"$WORK/providers" || return 1
+    IP_LEDGER=ips
+    RETRY_LEDGER=retry
+    KEYLESS=false
+    QUERY_PORT=$MANAGEMENT_PORT
+    if [ "$REPUTATION_PROVIDER" = proxycheck ]; then
+        IP_LEDGER=ips.proxycheck
+        RETRY_LEDGER=retry.proxycheck
+        if [ "$HAS_KEY" != true ]; then
+            KEYLESS=true
+            QUERY_PORT=$PROBE_PORT
+        fi
+    fi
     : >"$WORK/tls.curl"
     for ca_dir in /apex/com.android.conscrypt/cacerts /system/etc/security/cacerts; do
         if [ -d "$ca_dir" ]; then
@@ -98,9 +113,13 @@ settings() {
     PREFERRED_EXIT_INTERVAL=$EXIT_INTERVAL
     PREFERRED_BACKUPS=$BACKUPS
     PREFERRED_REJECT=$REJECT
+    PREFERRED_IP_LEDGER=$IP_LEDGER
+    PREFERRED_REPUTATION_PROVIDER=$REPUTATION_PROVIDER
+    PREFERRED_KEYLESS=$KEYLESS
     export PREFERRED_STATE PREFERRED_WORK PREFERRED_NOW PREFERRED_MAX_RISK
     export PREFERRED_ALLOW_COUNTRY_CHANGE PREFERRED_REVIEW_INTERVAL PREFERRED_EXIT_INTERVAL
     export PREFERRED_BACKUPS PREFERRED_REJECT
+    export PREFERRED_IP_LEDGER PREFERRED_REPUTATION_PROVIDER PREFERRED_KEYLESS
 }
 upsert() {
     PREFERRED_RECORD=$2 awk -F '\t' '
@@ -141,19 +160,31 @@ delay_test() {
 lookup() {
     ip_address=$1
     max_age=$2
-    cached=$(row ips "$ip_address")
+    cached=$(row "$IP_LEDGER" "$ip_address")
     if [ -n "$cached" ]; then
         IFS="$TAB" read -r _cache_ip cache_at _cache_cc _cache_risk _cache_bad <<EOF
 $cached
 EOF
         [ "$cache_at" -le "$NOW" ] && [ $((NOW - cache_at)) -lt "$max_age" ] && return 0
     fi
-    read -r retry_until retry_count <"$STATE/retry"
+    read -r retry_until retry_count <"$STATE/$RETRY_LEDGER"
     case "$retry_until" in '' | *[!0-9]*) retry_until=0 ;; esac
     [ "$NOW" -lt "$retry_until" ] && {
         LOOKUP_PAUSED=true
         return 1
     }
+    exit_retry_count=0
+    if [ "$KEYLESS" = true ]; then
+        # The source is the probed node, never another exit chosen to retry a denial.
+        [ -n "$QUERY_EXIT" ] && [ "$QUERY_EXIT" != - ] || return 1
+        exit_retry=$(row retry.proxycheck-exits "$QUERY_EXIT")
+        exit_retry_until=0
+        [ -z "$exit_retry" ] || IFS="$TAB" read -r _source exit_retry_until exit_retry_count <<EOF
+$exit_retry
+EOF
+        case "$exit_retry_until" in '' | *[!0-9]*) exit_retry_until=0 ;; esac
+        [ "$NOW" -ge "$exit_retry_until" ] || return 1
+    fi
     today=$(date -u +%Y-%m-%d)
     read -r quota_day quota_count <"$STATE/quota"
     [ "$quota_day" = "$today" ] || quota_count=0
@@ -165,23 +196,41 @@ EOF
         LOOKUP_PAUSED=true
         return 1
     }
-    PREFERRED_IP=$ip_address json ipqs-request "$SETTINGS" >"$WORK/ipqs.curl" || return 1
+    PREFERRED_IP=$ip_address json reputation-request "$WORK/settings.json" >"$WORK/reputation.curl" || return 1
     pace || return 1
     # Count failed requests too. Restarting the core never resets the daily budget.
     printf '%s %s\n' "$today" $((quota_count + 1)) >"$WORK/quota"
     mv -f "$WORK/quota" "$STATE/quota" || return 1
+    : >"$WORK/reputation.json"
+    : >"$WORK/headers"
     code=$(curl -q -sS --connect-timeout 5 --max-time 10 --max-filesize 131072 \
-        --proto '=https' --max-redirs 0 --config "$WORK/tls.curl" --config "$WORK/ipqs.curl" \
-        --noproxy '' --proxy "socks5h://127.0.0.1:$MANAGEMENT_PORT" \
+        --proto '=https' --max-redirs 0 --config "$WORK/tls.curl" --config "$WORK/reputation.curl" \
+        --http1.1 -H 'Connection: close' --noproxy '' --proxy "socks5h://127.0.0.1:$QUERY_PORT" \
         -D "$WORK/headers" -o "$WORK/reputation.json" -w '%{http_code}' 2>"$WORK/curl.error")
     request_result=$?
-    rm -f "$WORK/ipqs.curl"
+    rm -f "$WORK/reputation.curl"
     if [ "$request_result" -eq 0 ] && [ "$code" = 200 ] &&
-        json score "$WORK/reputation.json" >"$WORK/score" 2>/dev/null; then
+        PREFERRED_IP=$ip_address json score "$WORK/reputation.json" >"$WORK/score" 2>/dev/null; then
         score=$(cat "$WORK/score")
-        upsert ips "$ip_address$TAB$NOW$TAB$score" || return 1
-        printf '0 0\n' >"$STATE/retry"
+        upsert "$IP_LEDGER" "$ip_address$TAB$NOW$TAB$score" || return 1
+        printf '0 0\n' >"$STATE/$RETRY_LEDGER"
+        [ "$KEYLESS" != true ] || upsert retry.proxycheck-exits "$QUERY_EXIT${TAB}0${TAB}0"
+        printf '%s: last lookup succeeded at %s UTC.\n' "$REPUTATION_PROVIDER" "$(date -u '+%Y-%m-%d %H:%M:%S')" >"$STATE/lookup-status"
         return 0
+    fi
+    # Anonymous denials/quotas are per observed exit. Outages and invalid replies
+    # pause the service as a whole; credentials never fall back to anonymous use.
+    per_exit=false
+    lookup_status=
+    if [ "$REPUTATION_PROVIDER" = proxycheck ]; then
+        lookup_status=$(json reputation-status "$WORK/reputation.json" 2>/dev/null)
+        if [ "$KEYLESS" = true ]; then
+            case "$code:$lookup_status" in 401:* | 403:* | 429:* | 200:denied)
+                per_exit=true
+                retry_count=$exit_retry_count
+                ;;
+            esac
+        fi
     fi
     case "$retry_count" in '' | *[!0-9]*) retry_count=0 ;; esac
     retry_count=$((retry_count + 1))
@@ -189,9 +238,16 @@ EOF
     server_wait=$(awk 'tolower($1)=="retry-after:" {gsub("\r", "", $2); if ($2 ~ /^[0-9]+$/) print $2; exit}' "$WORK/headers" 2>/dev/null)
     case "$server_wait" in '' | *[!0-9]*) server_wait=0 ;; esac
     [ "$server_wait" -gt "$retry_wait" ] && retry_wait=$server_wait
-    printf '%s %s\n' "$((NOW + retry_wait))" "$retry_count" >"$STATE/retry"
-    LOOKUP_PAUSED=true
-    log "Reputation lookup unavailable (HTTP $code); retry in $retry_wait seconds. Previous reports retained."
+    if [ "$per_exit" = true ]; then
+        upsert retry.proxycheck-exits "$QUERY_EXIT$TAB$((NOW + retry_wait))$TAB$retry_count" || return 1
+        lookup_message="$REPUTATION_PROVIDER anonymous lookup denied/limited for exit $QUERY_EXIT (HTTP $code); retry in $retry_wait seconds."
+    else
+        printf '%s %s\n' "$((NOW + retry_wait))" "$retry_count" >"$STATE/$RETRY_LEDGER"
+        LOOKUP_PAUSED=true
+        lookup_message="$REPUTATION_PROVIDER lookup unavailable (HTTP $code); retry in $retry_wait seconds."
+    fi
+    log "$lookup_message Previous reports retained; unverified IPs stay unknown."
+    printf '%s\n' "$lookup_message Previous reports retained; unverified IPs stay unknown." >"$STATE/lookup-status"
     return 1
 }
 exit_ip() {
@@ -213,12 +269,13 @@ scan_node() {
     changes=0
     stable_at=$NOW
     n_delay=0
-    [ -z "$old" ] || IFS="$TAB" read -r _n_name n_at n4 n6 changes stable_at _attempted n_delay <<EOF
+    [ -z "$old" ] || IFS="$TAB" read -r _n_name n_at n4 n6 changes stable_at _attempted n_delay _previous_source <<EOF
 $old
 EOF
     if ! select_node "$PROBE_GROUP" "$target"; then return 1; fi
     if v4=$(exit_ip 4 "$IPV4_URL"); then
         node_scan_ok=true
+        QUERY_EXIT=$v4
         v6=-
         if [ "$IPV6" = true ]; then
             v6=$(exit_ip 6 "$IPV6_URL") || v6=-
@@ -238,7 +295,7 @@ EOF
         upsert health "$target${TAB}0$TAB$NOW" || return 1
         n_delay=$(awk -F '\t' -v key="$target" '$1==key {print $3; exit}' "$WORK/inventory")
         case "$n_delay" in '' | *[!0-9]*) n_delay=0 ;; esac
-        upsert nodes "$target$TAB$n_at$TAB$n4$TAB$n6$TAB$changes$TAB$stable_at$TAB$NOW$TAB$n_delay" || return 1
+        upsert nodes "$target$TAB$n_at$TAB$n4$TAB$n6$TAB$changes$TAB$stable_at$TAB$NOW$TAB$n_delay$TAB$REPUTATION_PROVIDER" || return 1
         # Quality is evaluated before requesting any additional delay measurement.
         verdict=$(PREFERRED_SCOPE=ALL PREFERRED_VALUE=$target PREFERRED_ALLOW_COUNTRY_CHANGE=true policy verdict)
         if [ -n "$verdict" ] && [ "$n_delay" -le 0 ]; then
@@ -246,7 +303,7 @@ EOF
             [ "$n_delay" -gt 0 ] || log "Delay check unavailable for $target; not admitting a new candidate without a measurement."
         fi
     fi
-    upsert nodes "$target$TAB$n_at$TAB$n4$TAB$n6$TAB$changes$TAB$stable_at$TAB$NOW$TAB$n_delay" || return 1
+    upsert nodes "$target$TAB$n_at$TAB$n4$TAB$n6$TAB$changes$TAB$stable_at$TAB$NOW$TAB$n_delay$TAB$REPUTATION_PROVIDER" || return 1
     [ "$node_scan_ok" = true ]
 }
 network_available() {
@@ -308,13 +365,13 @@ $verdict
 EOF
         candidate_alive=$(awk -F '\t' -v key="$candidate" '$1==key {print $2; exit}' "$WORK/inventory")
         if [ "$candidate_alive" != 1 ] || [ $((NOW - rep_at)) -ge "$SELECTION_MAX_AGE" ] || [ $((NOW - exit_at)) -ge "$EXIT_INTERVAL" ]; then
-            if [ "$candidate_alive" != 1 ] || [ $((NOW - exit_at)) -ge "$EXIT_INTERVAL" ]; then
+            if [ "$KEYLESS" = true ] || [ "$candidate_alive" != 1 ] || [ $((NOW - exit_at)) -ge "$EXIT_INTERVAL" ]; then
                 [ "$processed" -lt "$BATCH_SIZE" ] || continue
                 processed=$((processed + 1))
                 URGENT=true scan_node "$candidate" "$SELECTION_MAX_AGE" || continue
             else
                 record=$(row nodes "$candidate")
-                IFS="$TAB" read -r _name _at candidate4 candidate6 _changes _stable _attempt _delay <<EOF
+                IFS="$TAB" read -r _name _at candidate4 candidate6 _changes _stable _attempt _delay _source <<EOF
 $record
 EOF
                 URGENT=true lookup "$candidate4" "$SELECTION_MAX_AGE" || continue
@@ -373,11 +430,11 @@ tick() (
         printf 'Paused by module/manual/network-bypass state.\n' >"$STATE/summary"
         return 0
     fi
-    if [ "$ENABLED" != true ] || [ "$HAS_KEY" != true ]; then
+    if [ "$ENABLED" != true ] || { [ "$REPUTATION_PROVIDER" = ipqs ] && [ "$HAS_KEY" != true ]; }; then
         # Old configurations may have no preferred listeners/groups at all.
         # A disabled worker must still exit, including when controller credentials differ.
         printf 'false\n' >"$STATE/enabled"
-        printf 'Disabled or missing API key. Configure clash/private/preferred.json.\n' >"$STATE/summary"
+        printf 'Disabled or missing IPQS API key. Configure clash/private/preferred.json.\n' >"$STATE/summary"
         if get_api proxies "$WORK/proxies.json" && json groups "$WORK/proxies.json" >"$WORK/groups"; then
             while IFS="$TAB" read -r scope group current active; do
                 [ "$current" = "$REJECT" ] || select_node "$group" "$REJECT" || true
@@ -412,7 +469,7 @@ tick() (
     export PREFERRED_SCAN_REQUEST
     policy jobs | sort -t "$TAB" -k1,1n -k2,2n -k3,3 >"$WORK/jobs"
     processed=0
-    read -r retry_until _retry_count <"$STATE/retry"
+    read -r retry_until _retry_count <"$STATE/$RETRY_LEDGER"
     case "$retry_until" in '' | *[!0-9]*) retry_until=0 ;; esac
     while IFS="$TAB" read -r priority _attempted target; do
         [ ! -f "$STATE/stop.request" ] || break
@@ -429,8 +486,8 @@ tick() (
     select_node "$PROBE_GROUP" "$REJECT" || true
     policy status >"$WORK/report"
     mv -f "$WORK/report" "$STATE/report.tsv"
-    printf 'Last pass: %s UTC\nNodes this pass: %s\nReputation budget: %s/day\nReports are snapshots, not live trust guarantees.\n' \
-        "$(date -u '+%Y-%m-%d %H:%M:%S')" "$processed" "$DAILY_BUDGET" >"$STATE/summary"
+    printf 'Last pass: %s UTC\nNodes this pass: %s\nReputation source: %s\nAnonymous per-node queries: %s\nReputation budget: %s/day (all nodes combined)\nReports are snapshots, not live trust guarantees.\n' \
+        "$(date -u '+%Y-%m-%d %H:%M:%S')" "$processed" "$REPUTATION_PROVIDER" "$KEYLESS" "$DAILY_BUDGET" >"$STATE/summary"
     if [ ! -s "$WORK/jobs" ] && [ "$PREFERRED_SCAN_REQUEST" -gt 0 ]; then rm -f "$STATE/scan.request"; fi
     # Keep logs bounded without touching unrelated core logs.
     tail -n 300 "$STATE/events.log" 2>/dev/null >"$WORK/events"
@@ -487,6 +544,7 @@ case "$1" in
         ;;
     status)
         cat "$STATE/summary" 2>/dev/null
+        cat "$STATE/lookup-status"
         printf '\nSelections (URI-encoded node names):\n'
         cat "$STATE/choices"
         printf '\nReputation calls today:\n'

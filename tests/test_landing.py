@@ -460,6 +460,11 @@ class InstallerTests(unittest.TestCase):
         preferred = self.box / "clash/private/preferred.json"
         defaults = json.loads(preferred.read_text(encoding="utf-8"))
         self.assertFalse(defaults["enabled"])
+        self.assertEqual(defaults["reputation_provider"], "proxycheck")
+        self.assertEqual(defaults["proxycheck_key"], "")
+        # Simulate a deployed configuration from before provider selection existed.
+        for key in ("reputation_provider", "proxycheck_key", "proxycheck_max_risk"):
+            defaults.pop(key)
         defaults.update(
             {"enabled": True, "api_key": "fixture-private-key", "daily_budget": 37}
         )

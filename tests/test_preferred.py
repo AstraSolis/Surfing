@@ -7,6 +7,7 @@ No subscriptions, user API keys, public reputation services or Android devices a
 import argparse
 import copy
 import http.server
+import ipaddress
 import json
 import os
 import re
@@ -57,7 +58,203 @@ def run_json(action, data=None, **extra):
     return result
 
 
+def proxycheck_result(address="198.51.100.10", country="SG", risk=50):
+    return {
+        "status": "ok",
+        address: {
+            "location": {"country_code": country},
+            "detections": {
+                "anonymous": True,
+                "proxy": False,
+                "vpn": True,
+                "tor": False,
+                "hosting": True,
+                "scraper": False,
+                "compromised": False,
+                "risk": risk,
+            },
+            "attack_history": {},
+        },
+    }
+
+
+def proxycheck_reply(server, path, source):
+    url = urllib.parse.urlsplit(path)
+    address = urllib.parse.unquote(url.path.removeprefix("/v3/"))
+    key = urllib.parse.parse_qs(url.query).get("key", [""])[0]
+    server.proxycheck_calls.append((source, address, key))
+    callback = getattr(server, "on_proxycheck_call", None)
+    if callback is not None:
+        server.on_proxycheck_call = None
+        callback()
+    code = server.proxycheck_failure
+    if source in server.proxycheck_denied:
+        code = 403
+    if source in server.proxycheck_limited:
+        code = 429
+    if code:
+        return code, {"status": "denied" if code < 500 else "error"}, server.retry_after
+    country, _ = server.scores.get(address, ("US", 99))
+    # Emit compressed IPv6 like a real provider; the worker must match normalized addresses.
+    label = str(ipaddress.ip_address(address))
+    data = proxycheck_result(label, country)
+    data[label].update(copy.deepcopy(server.proxycheck_overrides.get(address, {})))
+    return 200, data, None
+
+
 class JsonTests(unittest.TestCase):
+    def test_provider_defaults_legacy_keys_and_optional_proxycheck_key(self):
+        for settings, provider, has_key, risk in (
+            ({}, "proxycheck", "false", "100"),
+            ({"api_key": "legacy-key"}, "ipqs", "true", "74"),
+            ({"proxycheck_key": "new-key"}, "proxycheck", "true", "100"),
+            ({"reputation_provider": "ipqs"}, "ipqs", "false", "74"),
+            (
+                {"reputation_provider": "proxycheck", "api_key": "legacy-key"},
+                "proxycheck",
+                "false",
+                "100",
+            ),
+        ):
+            with self.subTest(settings=settings):
+                result = run_json("settings", settings)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                rows = result.stdout.decode().splitlines()
+                self.assertEqual(
+                    (rows[12], rows[14], rows[16]), (risk, has_key, provider)
+                )
+        for settings in (
+            {"reputation_provider": "unknown"},
+            {"proxycheck_key": True},
+            {"proxycheck_max_risk": 101},
+        ):
+            self.assertNotEqual(run_json("settings", settings).returncode, 0)
+
+    def test_reputation_request_uses_only_the_selected_provider_key(self):
+        cases = (
+            ({}, "https://proxycheck.io/v3/198.51.100.10?tag=0"),
+            (
+                {"proxycheck_key": 'key?"&x'},
+                "https://proxycheck.io/v3/198.51.100.10?tag=0&key=key%3F%22%26x",
+            ),
+            (
+                {"api_key": "old-key"},
+                "https://ipqualityscore.com/api/json/ip/old-key/198.51.100.10?strictness=0&allow_public_access_points=true",
+            ),
+            (
+                {"reputation_provider": "proxycheck", "api_key": "old-key"},
+                "https://proxycheck.io/v3/198.51.100.10?tag=0",
+            ),
+        )
+        for settings, url in cases:
+            result = run_json(
+                "reputation-request", settings, PREFERRED_IP="198.51.100.10"
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(json.loads(result.stdout.decode().split(" = ", 1)[1]), url)
+
+    def test_proxycheck_preserves_raw_scores_and_separates_abuse(self):
+        address = "198.51.100.10"
+        for risk, flags, history, bad in (
+            (50, {}, {}, 0),
+            (100, {"proxy": True}, {}, 0),
+            (50, {}, {"login_attempt": 1}, 1),
+            (50, {}, {"new_attack_type": 4}, 1),
+            (100, {"compromised": True}, {}, 1),
+            (75, {"scraper": True}, {}, 1),
+            (75, {"tor": True}, {}, 1),
+        ):
+            data = proxycheck_result(risk=risk)
+            data[address]["detections"].update(flags)
+            data[address]["attack_history"] = history
+            result = run_json(
+                "score",
+                data,
+                PREFERRED_REPUTATION_PROVIDER="proxycheck",
+                PREFERRED_IP=address,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(result.stdout.decode().strip(), f"SG\t{risk}\t{bad}")
+
+    def test_proxycheck_rejects_unknown_fields_denials_and_mismatched_ip(self):
+        address = "198.51.100.10"
+        good = proxycheck_result()
+        variants = []
+        for field in ("risk", "compromised", "vpn"):
+            for value in (None, "false"):
+                data = copy.deepcopy(good)
+                data[address]["detections"][field] = value
+                variants.append(data)
+            data = copy.deepcopy(good)
+            del data[address]["detections"][field]
+            variants.append(data)
+        for history in (None, [], {"login_attempt": "0"}, {"scan": -1}):
+            data = copy.deepcopy(good)
+            data[address]["attack_history"] = history
+            variants.append(data)
+        data = copy.deepcopy(good)
+        del data[address]["attack_history"]
+        variants.append(data)
+        variants.extend(
+            [
+                {**good, "status": "denied"},
+                {
+                    **good,
+                    "status": "warning",
+                    "message": "Your API Key has been disabled.",
+                },
+                proxycheck_result("198.51.100.99"),
+                {"status": "ok"},
+            ]
+        )
+        for data in variants:
+            result = run_json(
+                "score",
+                data,
+                PREFERRED_REPUTATION_PROVIDER="proxycheck",
+                PREFERRED_IP=address,
+            )
+            self.assertNotEqual(result.returncode, 0, data)
+            self.assertEqual(result.stdout, b"")
+
+    def test_proxycheck_ipv6_normalization_warning_and_schema_risk_location(self):
+        address = "2001:db8::10"
+        wanted = "2001:db8:0:0:0:0:0:10"
+        data = proxycheck_result(address)
+        data["status"] = "warning"
+        data["message"] = "You are within 10% of your query limit for the day."
+        for top_level in (False, True):
+            if top_level:
+                data[address]["risk"] = data[address]["detections"].pop("risk")
+            result = run_json(
+                "score",
+                data,
+                PREFERRED_REPUTATION_PROVIDER="proxycheck",
+                PREFERRED_IP=wanted,
+            )
+            self.assertEqual(result.stdout.decode().strip(), "SG\t50\t0", result.stderr)
+        data[address]["detections"]["risk"] = 10
+        self.assertNotEqual(
+            run_json(
+                "score",
+                data,
+                PREFERRED_REPUTATION_PROVIDER="proxycheck",
+                PREFERRED_IP=wanted,
+            ).returncode,
+            0,
+        )
+        data[address]["detections"]["risk"] = 50
+        data[wanted] = copy.deepcopy(data[address])
+        self.assertNotEqual(
+            run_json(
+                "score",
+                data,
+                PREFERRED_REPUTATION_PROVIDER="proxycheck",
+                PREFERRED_IP=wanted,
+            ).returncode,
+            0,
+        )
+
     def test_strings_and_unicode_escapes_across_parser_chunks(self):
         for size in (2018, 2020, 2021, 2022, 2030, 2048, 4068, 4096):
             secret = "x" * size + '🚀\\"tail'
@@ -284,22 +481,38 @@ class NodeHandler(socketserver.BaseRequestHandler):
                 ):
                     return
                 time.sleep(self.server.delay)
-                if path.startswith("/ip6"):
+                response_code = 200
+                retry_after = None
+                if path.startswith("/v3/"):
+                    if (
+                        self.server.ip4
+                        in self.server.intelligence.proxycheck_disconnect
+                    ):
+                        return
+                    response_code, data, retry_after = proxycheck_reply(
+                        self.server.intelligence, path, self.server.ip4
+                    )
+                    body = json.dumps(data).encode()
+                elif path.startswith("/ip6"):
                     body = json.dumps({"ip": self.server.ip6}).encode()
                 elif path.startswith("/ip"):
                     body = json.dumps({"ip": self.server.ip4}).encode()
                 else:
                     body = b""
-                status = b"200 OK" if body else b"204 No Content"
+                status = (
+                    f"{response_code} Response".encode() if body else b"204 No Content"
+                )
                 close = b"connection: close" in request.lower()
                 connection = "close" if close else "keep-alive"
-                sock.sendall(
+                headers = (
                     b"HTTP/1.1 "
                     + status
                     + b"\r\nContent-Type: application/json\r\n"
-                    + f"Content-Length: {len(body)}\r\nConnection: {connection}\r\n\r\n".encode()
-                    + body
+                    + f"Content-Length: {len(body)}\r\nConnection: {connection}\r\n".encode()
                 )
+                if retry_after is not None:
+                    headers += f"Retry-After: {retry_after}\r\n".encode()
+                sock.sendall(headers + b"\r\n" + body)
                 if close:
                     return
         except (OSError, EOFError, IndexError):
@@ -309,6 +522,19 @@ class NodeHandler(socketserver.BaseRequestHandler):
 class IntelligenceHandler(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
         path = urllib.parse.urlsplit(self.path).path
+        if path.startswith("/v3/"):
+            code, data, retry_after = proxycheck_reply(
+                self.server, self.path, "management"
+            )
+            body = json.dumps(data).encode()
+            self.send_response(code)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            if retry_after is not None:
+                self.send_header("Retry-After", str(retry_after))
+            self.end_headers()
+            self.wfile.write(body)
+            return
         if path == "/delay":
             self.send_response(204)
             self.end_headers()
@@ -384,6 +610,13 @@ class WorkerTests(unittest.TestCase):
             IntelligenceHandler,
             lookups=[],
             limited=False,
+            proxycheck_calls=[],
+            proxycheck_failure=0,
+            proxycheck_denied=set(),
+            proxycheck_limited=set(),
+            proxycheck_disconnect=set(),
+            proxycheck_overrides={},
+            retry_after=3600,
             scores={
                 "198.51.100.10": ("SG", 10),
                 "198.51.100.20": ("HK", 12),
@@ -391,6 +624,8 @@ class WorkerTests(unittest.TestCase):
                 "2001:db8:0:0:0:0:0:20": ("HK", 12),
             },
         )
+        for node in self.nodes:
+            node.intelligence = self.intelligence
         origin = f"http://127.0.0.1:{self.intelligence.server_address[1]}"
         self.cfg = copy.deepcopy(SOURCE)
         self.api_port = landing.free_port()
@@ -454,6 +689,7 @@ class WorkerTests(unittest.TestCase):
         self.settings.update(
             {
                 "enabled": True,
+                "reputation_provider": "ipqs",
                 "api_key": "fixture-private-key",
                 "controller": f"http://127.0.0.1:{self.api_port}",
                 "controller_secret": self.cfg["secret"],
@@ -474,6 +710,7 @@ class WorkerTests(unittest.TestCase):
             source = source.replace(
                 "https://ipqualityscore.com/api/json/ip/", origin + "/ip/"
             )
+            source = source.replace("https://proxycheck.io/v3/", origin + "/v3/")
             source = source.replace("https://api.ipify.org?format=json", origin + "/ip")
             source = source.replace(
                 "https://api6.ipify.org?format=json", origin + "/ip6"
@@ -581,6 +818,7 @@ class WorkerTests(unittest.TestCase):
         self.assertEqual(result.returncode, expected_code, details)
         self.assertFalse(list(self.state.glob("work.*")), details)
         self.assertNotIn("fixture-private-key", details)
+        self.assertNotIn("fixture-proxycheck-key", details)
         for node in self.nodes:
             self.assertEqual(node.errors, [])
 
@@ -594,6 +832,250 @@ class WorkerTests(unittest.TestCase):
                     parts[index] = str(int(time.time()) - seconds)
             rows.append("\t".join(parts))
         write(path, "\n".join(rows) + "\n")
+
+    def use_proxycheck(self, key=""):
+        self.settings.update(
+            {"reputation_provider": "proxycheck", "proxycheck_key": key}
+        )
+        self.save_settings()
+
+    def test_proxycheck_keyless_queries_each_exit_and_shares_reports(self):
+        self.use_proxycheck()
+        self.once()
+        self.assertEqual(self.intelligence.lookups, [])
+        self.assertCountEqual(
+            self.intelligence.proxycheck_calls,
+            [
+                ("198.51.100.10", "198.51.100.10", ""),
+                ("198.51.100.20", "198.51.100.20", ""),
+            ],
+        )
+        self.assertEqual((self.state / "ips").read_text(), "")
+        self.assertEqual(
+            len((self.state / "ips.proxycheck").read_text().splitlines()), 2
+        )
+        previous = {code: self.current(code) for code in ("ALL", "SG", "HK")}
+        self.assertIn(previous["SG"], self.names[:2])
+        self.assertEqual(previous["HK"], self.names[2])
+        self.once()
+        self.assertEqual(len(self.intelligence.proxycheck_calls), 2)
+        self.assertEqual({code: self.current(code) for code in previous}, previous)
+        self.assertIn("proxycheck", (self.state / "report.tsv").read_text())
+        self.assertEqual(
+            self.api("/proxies/" + ENCODE("总模式"))["now"], "🌐 本机·本地直连"
+        )
+
+    def test_one_pass_uses_consistent_provider_credentials_and_route(self):
+        self.use_proxycheck()
+
+        def change_provider():
+            self.settings["reputation_provider"] = "ipqs"
+            self.save_settings()
+
+        self.intelligence.on_proxycheck_call = change_provider
+        self.once()
+        self.assertEqual(len(self.intelligence.proxycheck_calls), 2)
+        self.assertTrue(
+            all(
+                source == address and not key
+                for source, address, key in self.intelligence.proxycheck_calls
+            )
+        )
+        self.assertIn(self.current("SG"), self.names[:2])
+        self.once()
+        self.assertEqual(len(self.intelligence.lookups), 2)
+        self.assertEqual(len(self.intelligence.proxycheck_calls), 2)
+
+    def test_proxycheck_exit_denial_is_unknown_and_does_not_retry_via_another_node(
+        self,
+    ):
+        self.use_proxycheck()
+        self.intelligence.proxycheck_denied.add("198.51.100.10")
+        self.once()
+        self.assertCountEqual(
+            self.intelligence.proxycheck_calls,
+            [
+                ("198.51.100.10", "198.51.100.10", ""),
+                ("198.51.100.20", "198.51.100.20", ""),
+            ],
+        )
+        self.assertEqual(self.current("SG"), REJECT)
+        self.assertEqual(self.current("HK"), self.names[2])
+        self.assertNotIn("198.51.100.10", (self.state / "ips.proxycheck").read_text())
+        retry = (self.state / "retry.proxycheck-exits").read_text().splitlines()
+        blocked = next(
+            line.split("\t") for line in retry if line.startswith("198.51.100.10\t")
+        )
+        self.assertGreater(int(blocked[1]), time.time() + 3500)
+        self.age("nodes", (1, 6), 2000)
+        self.once()
+        self.assertEqual(len(self.intelligence.proxycheck_calls), 2)
+        self.assertIn("stay unknown", (self.state / "events.log").read_text())
+
+    def test_proxycheck_exit_backoff_increases_and_survives_other_exit_success(self):
+        self.use_proxycheck()
+        self.intelligence.proxycheck_limited.add("198.51.100.10")
+        self.intelligence.retry_after = None
+        for count, wait in ((1, 900), (2, 3600), (3, 21600)):
+            if count > 1:
+                self.age("nodes", (1, 6), 2000)
+                self.age("retry.proxycheck-exits", (1,), 1, "198.51.100.10")
+            self.once()
+            entries = (self.state / "retry.proxycheck-exits").read_text().splitlines()
+            blocked = next(
+                line.split("\t")
+                for line in entries
+                if line.startswith("198.51.100.10\t")
+            )
+            self.assertEqual(int(blocked[2]), count)
+            self.assertGreater(int(blocked[1]), time.time() + wait - 100)
+        calls = [
+            call
+            for call in self.intelligence.proxycheck_calls
+            if call[0] == "198.51.100.10"
+        ]
+        self.assertEqual(len(calls), 3)
+
+    def test_proxycheck_key_uses_management_route_without_anonymous_fallback(self):
+        self.use_proxycheck("fixture-proxycheck-key")
+        self.once()
+        self.assertCountEqual(
+            self.intelligence.proxycheck_calls,
+            [
+                ("management", "198.51.100.10", "fixture-proxycheck-key"),
+                ("management", "198.51.100.20", "fixture-proxycheck-key"),
+            ],
+        )
+        self.assertFalse(
+            any(path.startswith("/v3/") for node in self.nodes for path in node.paths)
+        )
+        previous = {code: self.current(code) for code in ("ALL", "SG", "HK")}
+        self.intelligence.proxycheck_failure = 401
+        self.age("nodes", (1, 6), 4000)
+        self.age("ips.proxycheck", (1,), 90000)
+        self.once()
+        self.assertEqual(len(self.intelligence.proxycheck_calls), 3)
+        self.assertTrue(
+            all(
+                call[0] == "management" and call[2]
+                for call in self.intelligence.proxycheck_calls
+            )
+        )
+        self.assertEqual({code: self.current(code) for code in previous}, previous)
+
+    def test_proxycheck_outage_pauses_service_and_does_not_create_clean_reports(self):
+        self.use_proxycheck()
+        self.intelligence.proxycheck_failure = 503
+        self.once()
+        self.assertEqual(len(self.intelligence.proxycheck_calls), 1)
+        self.assertEqual((self.state / "ips.proxycheck").read_text(), "")
+        self.assertEqual(self.current("ALL"), REJECT)
+        self.once()
+        self.assertEqual(len(self.intelligence.proxycheck_calls), 1)
+
+    def test_transport_failure_does_not_reuse_a_previous_denial_response(self):
+        self.use_proxycheck()
+        self.intelligence.proxycheck_denied.add("198.51.100.10")
+        self.intelligence.proxycheck_disconnect.add("198.51.100.20")
+        self.once()
+        until, count = (self.state / "retry.proxycheck").read_text().split()
+        self.assertEqual(count, "1")
+        self.assertGreater(int(until), time.time() + 800)
+        self.assertNotIn(
+            "198.51.100.20", (self.state / "retry.proxycheck-exits").read_text()
+        )
+        self.assertIn("HTTP 000", (self.state / "lookup-status").read_text())
+        self.assertEqual((self.state / "quota").read_text().split()[1], "2")
+        self.assertEqual((self.state / "ips.proxycheck").read_text(), "")
+        self.assertEqual(self.current("ALL"), REJECT)
+        self.once()
+        self.assertEqual(len(self.intelligence.proxycheck_calls), 1)
+
+    def test_proxycheck_unknown_history_cannot_be_selected(self):
+        self.use_proxycheck()
+        self.intelligence.proxycheck_overrides = {
+            address: {"attack_history": None}
+            for address in ("198.51.100.10", "198.51.100.20")
+        }
+        self.once()
+        self.assertEqual(self.current("ALL"), REJECT)
+        self.assertEqual((self.state / "ips.proxycheck").read_text(), "")
+
+    def test_proxycheck_expired_candidate_refreshes_through_its_own_node(self):
+        self.use_proxycheck()
+        self.once()
+        self.age("ips.proxycheck", (1,), 8000)
+        self.once()
+        self.assertEqual(len(self.intelligence.proxycheck_calls), 2)
+        self.choose("OpenAI", "🌐 本机·本地直连")
+        self.once()
+        self.choose("OpenAI", "ALL·优选")
+        self.once()
+        self.assertNotEqual(self.current("ALL"), REJECT)
+        self.assertEqual(len(self.intelligence.proxycheck_calls), 3)
+        self.assertTrue(
+            all(
+                source == address and not key
+                for source, address, key in self.intelligence.proxycheck_calls
+            )
+        )
+
+    def test_provider_change_keeps_cache_sources_separate_and_rechecks(self):
+        self.once()
+        old_reports = (self.state / "ips").read_bytes()
+        self.intelligence.proxycheck_overrides["198.51.100.10"] = {
+            "attack_history": {"vulnerability_probing": 1}
+        }
+        self.use_proxycheck()
+        self.once()
+        self.assertEqual((self.state / "ips").read_bytes(), old_reports)
+        self.assertEqual(len(self.intelligence.lookups), 2)
+        self.assertEqual(len(self.intelligence.proxycheck_calls), 2)
+        self.assertEqual(self.current("SG"), REJECT)
+        self.assertEqual(self.current("HK"), self.names[2])
+        self.assertIn("198.51.100.10", (self.state / "ips.proxycheck").read_text())
+
+    def test_legacy_ipqs_settings_and_eight_field_nodes_remain_compatible(self):
+        del self.settings["reputation_provider"]
+        self.save_settings()
+        self.once()
+        old_nodes = (
+            "\n".join(
+                "\t".join(line.split("\t")[:8])
+                for line in (self.state / "nodes").read_text().splitlines()
+            )
+            + "\n"
+        )
+        write(self.state / "nodes", old_nodes)
+        self.once()
+        self.assertEqual(len(self.intelligence.lookups), 2)
+        self.assertEqual(self.intelligence.proxycheck_calls, [])
+        self.assertIn(self.current("SG"), self.names[:2])
+
+    def test_proxycheck_ipv6_risk_and_global_budget_are_enforced(self):
+        self.use_proxycheck()
+        self.settings["check_ipv6"] = True
+        self.save_settings()
+        self.intelligence.proxycheck_overrides["2001:db8:0:0:0:0:0:10"] = {
+            "attack_history": {"scan": 2}
+        }
+        self.once()
+        self.assertEqual(self.current("SG"), REJECT)
+        self.assertEqual(self.current("HK"), self.names[2])
+        self.assertEqual(len(self.intelligence.proxycheck_calls), 4)
+        self.assertTrue(
+            all(
+                source != "management" and not key
+                for source, _, key in self.intelligence.proxycheck_calls
+            )
+        )
+        self.settings["daily_budget"] = 4
+        self.save_settings()
+        self.age("nodes", (1, 6), 4000)
+        self.age("ips.proxycheck", (1,), 90000)
+        self.once()
+        self.assertEqual(len(self.intelligence.proxycheck_calls), 4)
+        self.assertEqual((self.state / "quota").read_text().split()[1], "4")
 
     def test_shared_ip_reports_and_independent_region_choices(self):
         self.once()

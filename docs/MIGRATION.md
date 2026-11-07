@@ -27,7 +27,7 @@ https://github.com/AstraSolis/Surfing/releases/latest/download/Surfing.json
 | hosts | 原文件备份为 `hosts.bak`，安装包默认 hosts 会被部署或按选择移除 | 自己添加的 hosts 需逐项恢复，并确认是否挂载 |
 | 自定义规则和策略记忆 | 升级不整体替换 `clash/etc/`、`rules/`、`proxies/`、`cache.db` | 保留旧策略记忆不代表使用了新默认；广告组若仍记忆 `PASS`，需手动改为拒绝 |
 | AI 默认规则 | 首次安装及覆盖升级部署十份模块维护的 `rules/AI-*.list`，这些默认文件会被更新 | 个人修改另存 `etc/` 并显式引用；旧 YAML 不自动引用新规则。各 AI 组默认 `总模式`，按需单独选择家宽或机场节点，详见 [AI 分流说明](AI-ROUTING.md) |
-| 优选模式 | 部署默认模板与独立调度脚本；仅在缺失时初始化 `clash/private/preferred.json`，保留 API Key 和 `clash/private/preferred/` 状态 | 需新 YAML 中的监听入口、优选组及业务组引用；默认不探测，配置方法和频率见 [优选说明](PREFERRED.md) |
+| 优选模式 | 部署默认模板与独立调度脚本；仅在缺失时初始化 `clash/private/preferred.json`，保留 API Key 和 `clash/private/preferred/` 状态；旧 IPQS Key 继续使用，空 Key 可采用 ProxyCheck 匿名查询，两家报告独立 | 需 YAML 中的监听入口、优选组及业务组引用；默认不探测，配置方法和频率见 [优选说明](PREFERRED.md) |
 
 当前 `VARS` 是：`enable_network_service_control`、`bypass_via_iptables`、`enable_cellular_proxy`、`enable_wifi_proxy`、`enable_ssid_filter`、`enable_mac_filter`、`use_wifi_list_mode`、`blacklist_wifi_macs`、`whitelist_wifi_macs`、`blacklist_wifi_ssids`、`whitelist_wifi_ssids`、`ap_list`、`gid_list`、`user_packages_list`、`proxy_mode`、`proxy_method`、`ipv6`。例如个人端口、TUN 设备名、DNS 转发、IKE NAT-T 绕过、额外网卡规则等不在列表中，需对照备份恢复，并保持 Shell 与 mihomo 设置一致。安装器还会为 `ap_list` 补充 `swlan+`、`softap+`。
 

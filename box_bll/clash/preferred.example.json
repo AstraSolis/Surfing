@@ -1,5 +1,7 @@
 {
   "enabled": false,
+  "reputation_provider": "proxycheck",
+  "proxycheck_key": "",
   "api_key": "",
   "providers": ["1.主要地址", "2.备用地址", "3.额外地址"],
   "controller": "http://127.0.0.1:9090",
@@ -15,6 +17,7 @@
   "batch_size": 5,
   "backups": 2,
   "max_risk": 74,
+  "proxycheck_max_risk": 100,
   "poll_interval": 60,
   "allow_country_change": false
 }

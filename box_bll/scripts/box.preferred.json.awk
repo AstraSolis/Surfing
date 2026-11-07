@@ -170,6 +170,13 @@ function textsetting(name, def,    id) {
     if (kind[id] != "string" || !clean(value[id])) fail("invalid setting: " name)
     return value[id]
 }
+function reputation_provider(    provider) {
+    # A pre-provider configuration with an IPQS key keeps its original service.
+    provider = textsetting("reputation_provider", textsetting("api_key", "") != "" ? "ipqs" : "proxycheck")
+    if (provider != "ipqs" && provider != "proxycheck") fail("invalid reputation provider")
+    return provider
+}
+function reputation_key(provider) { return textsetting(provider == "ipqs" ? "api_key" : "proxycheck_key", "") }
 function ip4(s,    a,n,i,out) {
     n = split(s, a, ".")
     if (n != 4) return ""
@@ -200,6 +207,48 @@ function ip6(s,    halves,a,b,n,m,i,out,part,dc) {
     # Global unicast only. Mapped, local and link-local addresses are not exit evidence.
     if (out !~ /^[23][0-9a-f][0-9a-f][0-9a-f]:/) return ""
     return out
+}
+function address(s) { return index(s, ":") ? ip6(s) : ip4(s) }
+function proxycheck_score(    status,wanted,obj,i,item,det,risk,alternate,cc,flags,n,history,attacks,bad) {
+    status = field(root, "status")
+    if (kind[get(root, "status")] != "string" || (status != "ok" && status != "warning"))
+        fail("ProxyCheck lookup was not successful")
+    # Warnings about disabled keys are not a successful authenticated lookup.
+    if (status == "warning" && field(root, "message") !~ /^You are within 10% of your query limit for the day\.$/)
+        fail("ProxyCheck warning requires attention")
+    wanted = address(ENVIRON["PREFERRED_IP"])
+    if (wanted == "") fail("missing queried IP")
+    for (i = 1; i <= count[root]; i++) {
+        item = child[root,i]
+        if (address(member[item]) == wanted) {
+            if (obj) fail("duplicate normalized IP result")
+            obj = item
+        }
+    }
+    if (kind[obj] != "object") fail("queried IP is missing from ProxyCheck result")
+    det = get(obj, "detections"); cc = field(get(obj, "location"), "country_code")
+    if (kind[det] != "object" || cc !~ /^[A-Z][A-Z]$/) fail("incomplete ProxyCheck result")
+    n = split("anonymous proxy vpn tor hosting scraper compromised", flags, " ")
+    for (i = 1; i <= n; i++) if (kind[get(det, flags[i])] != "boolean") fail("unknown ProxyCheck detection")
+    # Live v3 places risk in detections; the published OpenAPI also permits it at the IP result level.
+    risk = get(det, "risk"); alternate = get(obj, "risk")
+    if (!risk) risk = alternate
+    if (kind[risk] != "number" || value[risk] !~ /^[0-9]+$/ || value[risk] + 0 > 100)
+        fail("unknown ProxyCheck risk")
+    if (alternate && (kind[alternate] != "number" || value[alternate] !~ /^[0-9]+$/ || value[alternate] + 0 != value[risk] + 0))
+        fail("conflicting ProxyCheck risk")
+    history = get(obj, "attack_history")
+    if (kind[history] != "object") fail("unknown ProxyCheck attack history")
+    attacks = 0
+    for (i = 1; i <= count[history]; i++) {
+        item = child[history,i]
+        if (kind[item] != "number" || value[item] !~ /^[0-9]+$/ || value[item] + 0 > 2147483647)
+            fail("invalid ProxyCheck attack count")
+        if (value[item] + 0 > 0) attacks = 1
+    }
+    # Preserve the raw score. A VPN/proxy label alone is not evidence of abuse.
+    bad = attacks || field(det, "compromised") == "true" || field(det, "scraper") == "true" || field(det, "tor") == "true"
+    print cc "\t" value[risk] "\t" (bad ? 1 : 0)
 }
 function mark(name, depth,    obj,t,all,i) {
     if (depth > 32 || visiting[name]) return
@@ -250,6 +299,7 @@ END {
     if (action == "select") { print "{\"name\":" quote(decode(ENVIRON["PREFERRED_VALUE"])) "}"; exit }
     document(); root = documents[1]
     if (action == "settings") {
+        provider = reputation_provider()
         print boolsetting("enabled", "false")
         controller = textsetting("controller", "http://127.0.0.1:9090")
         if (controller !~ /^http:\/\/127\.0\.0\.1:[0-9]+$/) fail("controller must use IPv4 loopback")
@@ -266,11 +316,12 @@ END {
         print intsetting("request_gap", 5, 2, 60)
         print intsetting("batch_size", 5, 1, 30)
         print intsetting("backups", 2, 0, 3)
-        print intsetting("max_risk", 74, 0, 89)
+        print provider == "proxycheck" ? intsetting("proxycheck_max_risk", 100, 0, 100) : intsetting("max_risk", 74, 0, 89)
         print intsetting("poll_interval", 60, 30, 300)
-        key = textsetting("api_key", "")
+        key = reputation_key(provider)
         print key != "" ? "true" : "false"
         print boolsetting("allow_country_change", "false")
+        print provider
     } else if (action == "providers") {
         list = get(root, "providers")
         if (!list) {
@@ -287,15 +338,28 @@ END {
     } else if (action == "controller-auth") {
         secret = textsetting("controller_secret", "")
         if (secret != "") print "header = " quote("Authorization: Bearer " secret)
-    } else if (action == "ipqs-request") {
-        key = textsetting("api_key", "")
-        if (key == "") fail("API key is missing")
-        print "url = " quote("https://ipqualityscore.com/api/json/ip/" encode(key) "/" encode(ENVIRON["PREFERRED_IP"]) "?strictness=0&allow_public_access_points=true")
+    } else if (action == "reputation-request") {
+        provider = reputation_provider(); key = reputation_key(provider)
+        queried = address(ENVIRON["PREFERRED_IP"])
+        if (queried == "") fail("invalid queried IP")
+        if (provider == "ipqs") {
+            if (key == "") fail("IPQS API key is missing")
+            url = "https://ipqualityscore.com/api/json/ip/" encode(key) "/" encode(queried) "?strictness=0&allow_public_access_points=true"
+        } else {
+            url = "https://proxycheck.io/v3/" encode(queried) "?tag=0"
+            if (key != "") url = url "&key=" encode(key)
+        }
+        print "url = " quote(url)
     } else if (action == "ip") {
         s = field(root, "ip")
         s = ENVIRON["PREFERRED_FAMILY"] == "6" ? ip6(s) : ip4(s)
         if (s == "") fail("invalid exit IP")
         print s
+    } else if (action == "score" && ENVIRON["PREFERRED_REPUTATION_PROVIDER"] == "proxycheck") {
+        proxycheck_score()
+    } else if (action == "reputation-status") {
+        status = field(root, "status")
+        if (kind[get(root, "status")] == "string" && status ~ /^(ok|warning|denied|error)$/) print status
     } else if (action == "score") {
         risk = get(root, "fraud_score"); abuse = get(root, "recent_abuse"); bot = get(root, "bot_status")
         cc = field(root, "country_code")

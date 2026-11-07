@@ -6,7 +6,7 @@
 
 ## 优选模式
 
-运行 `python tests/test_preferred.py --shell /path/to/ash --busybox /path/to/busybox --mihomo /path/to/mihomo --curl /path/to/curl`。测试使用真实核心、本机模拟代理和信誉接口，覆盖 Unicode/JSON 解析、实际出口查询、共享报告、独立地区选择、稳定保持、配额、限流、过期候选与 IPv6 风险。测试副本将公共地址替换为回环地址，并跳过真实等待；间隔逻辑另用受控时钟验证。省略核心参数只运行解析及部分脚本验证，不表示端到端验证通过。
+运行 `python tests/test_preferred.py --shell /path/to/ash --busybox /path/to/busybox --mihomo /path/to/mihomo --curl /path/to/curl`。测试使用真实核心、本机模拟代理和信誉接口，覆盖 Unicode/JSON 解析、实际出口查询、共享报告、独立地区选择、稳定保持、配额、限流、过期候选与 IPv6 风险。ProxyCheck 用例核对匿名请求经被测节点、带 Key 请求经管理连接、共享出口拒绝后不换来源重试、逐出口退避及全局故障暂停、未知字段不当零分、原始分与攻击记录分别处理、服务间缓存隔离和旧 IPQS 配置/账本兼容。测试副本将公共地址替换为回环地址，并跳过真实等待；间隔逻辑另用受控时钟验证。省略核心参数只运行解析及部分脚本验证，不表示端到端验证通过。
 
 ## AI 分流
 
