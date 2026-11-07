@@ -261,24 +261,31 @@ proxy-groups:
       - 🌐 本机·本地直连
   # 可见入口共用一次检测；后台只更新对应的内部出口选择。
   - name: ALL·优选
+    icon: "https://raw.githubusercontent.com/AstraSolis/Surfing/main/app/icon/Preferred.svg"
     type: select
     proxies: [优选·ALL出口]
   - name: 狮城地区·优选
+    icon: "https://cdn.jsdelivr.net/gh/GitMetaio/Surfing@main/app/icon/Singapore.svg"
     type: select
     proxies: [优选·SG出口]
   - name: 香港地区·优选
+    icon: "https://cdn.jsdelivr.net/gh/GitMetaio/Surfing@main/app/icon/HK.svg"
     type: select
     proxies: [优选·HK出口]
   - name: 日本地区·优选
+    icon: "https://cdn.jsdelivr.net/gh/GitMetaio/Surfing@main/app/icon/JP.svg"
     type: select
     proxies: [优选·JP出口]
   - name: 美国地区·优选
+    icon: "https://cdn.jsdelivr.net/gh/GitMetaio/Surfing@main/app/icon/US.svg"
     type: select
     proxies: [优选·US出口]
   - name: 中国台湾·优选
+    icon: "https://cdn.jsdelivr.net/gh/GitMetaio/Surfing@main/app/icon/CN.svg"
     type: select
     proxies: [优选·TW出口]
   - name: 其它地区·优选
+    icon: "https://cdn.jsdelivr.net/gh/GitMetaio/Surfing@main/app/icon/Globe.svg"
     type: select
     proxies: [优选·OTHER出口]
   - name: 优选·ALL出口
